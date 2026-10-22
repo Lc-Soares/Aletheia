@@ -1,1 +1,14 @@
-.env*
+node_modules/
+dist/
+coverage/
+
+# Segredos
+.env
+.env.*
+secrets/
+
+# Estado local do Claude Code (não versionar)
+.claude/state/
+.claude/settings.local.json
+.claude/worktrees/
+CLAUDE.local.md
