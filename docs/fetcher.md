@@ -91,7 +91,7 @@ Toda URL, seja a do usuário, um redirecionamento ou uma mídia extraída do HTM
    - até 2048 caracteres.
 
    O parser WHATWG normaliza IPv4 em decimal, octal, hexadecimal e abreviado (`2130706433`, `0177.0.0.1`, `0x7f.1`, `127.1`) para quatro octetos antes da checagem.
-2. **DNS uma única vez** (`resolve.ts`). Todos os IPs devolvidos precisam ser permitidos; um só proibido bloqueia o nome.
+2. **DNS uma única vez** (`resolve.ts`). Todos os IPs devolvidos precisam ser permitidos; um só proibido bloqueia o nome. Ver "Resolução de DNS", abaixo.
 3. **Política de IP** (`ip-policy.ts`):
    - IPv4 bloqueado: 0/8, 10/8, 100.64/10, 127/8, 169.254/16, 172.16/12, 192.0.0/24, 192.0.2/24, 192.88.99/24, 192.168/16, 198.18/15, 198.51.100/24, 203.0.113/24, 224/4 e 240/4.
    - IPv6: só 2000::/3 é aceito, menos 2001::/23 (inclui Teredo), 2001:db8::/32, 2002::/16 e 3fff::/20. Isso já exclui ::, ::1, fc00::/7, fe80::/10, fec0::/10, ff00::/8, 64:ff9b::/96 e ::/96.
@@ -111,6 +111,19 @@ Toda URL, seja a do usuário, um redirecionamento ou uma mídia extraída do HTM
 Pedidos enviados: só GET, `User-Agent: AletheiaFetcher/0.1 (+https://github.com/Lc-Soares/Aletheia)`, `Accept`, `Accept-Encoding` e `Connection: close`. Nunca Cookie, Authorization ou Referer.
 
 Os testes usam resolvedor e transporte injetados. A única "política de teste" (`TEST_LOOPBACK_POLICY`, que libera 127.0.0.1 para servidores locais) existe em `fetcher/src/testing.ts`, fora da imagem de produção. `main.ts` usa sempre `isPublicAddress` e `DEFAULT_LIMITS`. `resolveLimits` só deixa reduzir limites.
+
+### Resolução de DNS
+
+- **c-ares, não `getaddrinfo`.** `dns.promises.Resolver` com `timeout` de 1,5 s e 2 tentativas, consultando `resolve4` e `resolve6` em paralelo. O `getaddrinfo` do sistema ocupa uma thread do threadpool do libuv (4 por padrão) até o timeout do sistema operacional, mesmo depois que o fetcher desistiu. Uma página com mídias em subdomínios de um DNS que nunca responde prendia as 4 threads e parava o zlib e o DNS de toda a instância (achado 4 da revisão). O c-ares não usa o threadpool.
+- **Um resolvedor por consulta**, cancelado (`cancel()`) quando a requisição aborta ou o prazo do download (HTML ou mídia) esgota. Assim, cancelar uma requisição não cancela as consultas de outra.
+- **Uma família falha e a outra responde:**
+  - se a falha é "sem registro" (`ENODATA` ou `ENOTFOUND`), segue com a família que respondeu (há nomes só com A ou só com AAAA);
+  - qualquer outra falha (`ETIMEOUT`, `ESERVFAIL`, `EREFUSED`, resposta inválida etc.) **falha fechado** com `network`, porque não dá para garantir que vimos todos os IPs;
+  - nenhuma família com registro: `network`.
+- **Diferença em relação ao `getaddrinfo`:** `resolve4` e `resolve6` consultam os servidores DNS configurados e não leem `/etc/hosts`. Nomes como `localhost` já são recusados antes, pela política de URL.
+- **Mitigação adicional:** `UV_THREADPOOL_SIZE=16` no Dockerfile, porque zlib e crypto continuam no threadpool.
+
+**Limitação a revisar com dados reais:** a regra de falhar fechado quando uma família dá erro diferente de "sem registro" troca disponibilidade por segurança. Servidores autoritativos que respondem SERVFAIL ou não respondem a AAAA existem e fariam o site inteiro falhar com `network`. Como a conexão é sempre feita num IP já validado, aceitar só a família que respondeu não abriria SSRF; só afrouxaria a regra de "todos os IPs". Rever com a taxa real de falhas depois do deploy. **O DNS real não foi testado:** os testes usam um cliente c-ares falso, e os valores de `timeout` e `tries` ainda não foram observados contra servidores reais nem contra o DNS do Cloud Run.
 
 ## Limites e justificativas
 
@@ -204,7 +217,8 @@ Todos os testes usam DNS e transporte simulados, ou um servidor HTTP local em 12
 - Sites e CDNs que bloqueiam o User-Agent próprio, exigem cookies ou aplicam desafio anti-bot (Cloudflare e afins).
 - Redes sociais (Instagram, X, Facebook, TikTok), que costumam exigir login ou JavaScript.
 - HTTPS de ponta a ponta: SNI e verificação de certificado usam o hostname, mas não há teste com certificado TLS real.
-- IPv6 real (só a política foi testada) e DNS real (`dns.lookup` do sistema).
+- IPv6 real (só a política foi testada).
+- DNS real: o resolvedor c-ares (`resolve4`/`resolve6`, timeout e tentativas) só foi testado com cliente falso; ver "Resolução de DNS".
 - Comportamento no Cloud Run: streaming NDJSON grande, memória por instância, ID token real da conta de serviço e alcance do servidor de metadados.
 - Workers de extração em 1 vCPU real: a disputa de CPU só foi simulada prendendo o processo a um núcleo no Windows.
 - Imagem Docker: não foi construída na máquina de desenvolvimento (sem Docker). O `.dockerignore` e o comando de produção têm teste, mas a imagem só é construída no CI.

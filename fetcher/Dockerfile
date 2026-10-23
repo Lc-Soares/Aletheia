@@ -24,6 +24,9 @@ RUN npm ci --omit=dev --workspace fetcher --ignore-scripts
 
 FROM node:24-slim AS runtime
 ENV NODE_ENV=production
+# O DNS usa c-ares (fora do threadpool), mas zlib e crypto ainda usam o threadpool do libuv
+# (padrão: 4 threads). Mitigação adicional para o achado 4 da revisão; ver docs/fetcher.md.
+ENV UV_THREADPOOL_SIZE=16
 WORKDIR /app/fetcher
 COPY --from=deps --chown=node:node /app/node_modules /app/node_modules
 COPY --chown=node:node fetcher/package.json ./
