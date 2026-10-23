@@ -114,6 +114,39 @@ describe("extrator em worker", () => {
   });
 });
 
+// Worker falso numa URL data: (nenhum arquivo extra na imagem) que posta a expressão dada.
+const fakeWorker = (message: string): URL =>
+  new URL(
+    `data:text/javascript,${encodeURIComponent(`import { parentPort } from "node:worker_threads"; parentPort.postMessage(${message});`)}`,
+  );
+
+describe("mensagem do worker é validada no processo principal", () => {
+  const run = (message: string) => createWorkerExtractor(resolveLimits(), fakeWorker(message))("<p></p>", PAGE, never());
+
+  test("mensagem bem formada passa", async () => {
+    const page = { title: "T", headline: null, media: [{ url: "https://cdn.example/a.jpg", kind: "image", source: "img" }] };
+    assert.deepEqual(await run(JSON.stringify(page)), page);
+  });
+
+  const malformed: [string, string][] = [
+    ["sem mensagem útil (undefined)", "undefined"],
+    ["título acima de 300 caracteres", `{ title: "a".repeat(301), headline: null, media: [] }`],
+    ["esquema perigoso na mídia", `{ title: null, headline: null, media: [{ url: "file:///etc/passwd", kind: "image", source: "img" }] }`],
+    [
+      "mídias demais",
+      `{ title: null, headline: null, media: Array.from({ length: 201 }, (_, i) => ({ url: "https://x.example/" + i, kind: "image", source: "img" })) }`,
+    ],
+    ["source desconhecido", `{ title: null, headline: null, media: [{ url: "https://x.example/a", kind: "image", source: "iframe" }] }`],
+  ];
+  for (const [name, message] of malformed) {
+    test(`${name}: FetchError network e worker encerrado`, async () => {
+      const extract = createWorkerExtractor(resolveLimits(), fakeWorker(message));
+      await assertRejects(extract("<p></p>", PAGE, never()), "network");
+      assert.equal(extract.active, 0);
+    });
+  }
+});
+
 describe("semáforo da fila", () => {
   test("abort tardio de quem já recebeu a vaga não tira outro da fila (indexOf = -1)", { timeout: 5_000 }, async () => {
     const slots = createSemaphore(1, 4);

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import type { ByteBudget } from "./body.ts";
 import { FetchError, type FetchErrorCategory, OverloadedError, toFetchError } from "./errors.ts";
 import type { Extractor } from "./extract-pool.ts";
-import type { MediaRef } from "./extract.ts";
+import type { MediaRef } from "./media.ts";
 import { type FetcherDeps, safeFetch } from "./safe-fetch.ts";
 
 export type MediaDownload =

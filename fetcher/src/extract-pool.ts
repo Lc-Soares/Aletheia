@@ -1,8 +1,9 @@
 import { Worker } from "node:worker_threads";
 
 import { FetchError, OverloadedError, withDeadline } from "./errors.ts";
-import type { ExtractedPage } from "./extract.ts";
 import type { Limits } from "./limits.ts";
+import type { ExtractedPage } from "./media.ts";
+import { validateWorkerPage } from "./worker-message.ts";
 
 // O parse5 monta a árvore inteira e tem casos patológicos de memória e de CPU síncrona com HTML
 // hostil (revisão da Fase 3, achados 1 e 2). Cada extração roda num worker novo, com heap limitado
@@ -58,17 +59,17 @@ function workerError(error: unknown): FetchError {
   return new FetchError(code === "ERR_WORKER_OUT_OF_MEMORY" ? "too_large" : "network");
 }
 
-function workerResult(worker: Worker): Promise<ExtractedPage> {
+function workerResult(worker: Worker): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    worker.once("message", (page: ExtractedPage) => resolve(page));
+    worker.once("message", (message: unknown) => resolve(message));
     worker.once("error", (error) => reject(workerError(error)));
     worker.once("exit", () => reject(new FetchError("network"))); // saiu sem responder
   });
 }
 
-function startWorker(htmlText: string, pageUrl: string, limits: Limits): Worker {
+function startWorker(workerUrl: URL, htmlText: string, pageUrl: string, limits: Limits): Worker {
   const { maxMediaRefs, maxUrlLength, maxHtmlNodes } = limits;
-  return new Worker(WORKER_URL, {
+  return new Worker(workerUrl, {
     workerData: { htmlText, pageUrl, limits: { maxMediaRefs, maxUrlLength, maxHtmlNodes } },
     execArgv: [],
     env: {},
@@ -76,16 +77,17 @@ function startWorker(htmlText: string, pageUrl: string, limits: Limits): Worker 
   });
 }
 
-export function createWorkerExtractor(limits: Limits): Extractor {
+// workerUrl só muda em teste (worker falso em URL data:); produção usa sempre extract-worker.ts.
+export function createWorkerExtractor(limits: Limits, workerUrl: URL = WORKER_URL): Extractor {
   const slots = createSemaphore(limits.extractConcurrency, QUEUE_PER_SLOT * limits.extractConcurrency);
   let active = 0;
   const runWorker = async (htmlText: string, pageUrl: string, signal: AbortSignal): Promise<ExtractedPage> => {
     // O prazo conta a partir da vaga: inclui subir o worker, mas não a espera na fila.
     const deadline = AbortSignal.any([signal, AbortSignal.timeout(limits.extractTotalMs)]);
-    const worker = startWorker(htmlText, pageUrl, limits);
+    const worker = startWorker(workerUrl, htmlText, pageUrl, limits);
     active++;
     try {
-      return await withDeadline(workerResult(worker), deadline);
+      return validateWorkerPage(await withDeadline(workerResult(worker), deadline), limits);
     } finally {
       await worker.terminate(); // sempre: sucesso, erro, prazo ou requisição cancelada
       active--;

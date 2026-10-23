@@ -1,25 +1,13 @@
 import { type DefaultTreeAdapterTypes, html as parse5Html, parse } from "parse5";
 
 import { DEFAULT_LIMITS } from "./limits.ts";
+import { type ExtractedPage, MAX_TEXT_LENGTH, type MediaKind, type MediaRef, type MediaSource } from "./media.ts";
 
 type Element = DefaultTreeAdapterTypes.Element;
 type Node = DefaultTreeAdapterTypes.Node;
 
-export type MediaKind = "image" | "video";
-export type MediaSource =
-  | "og:image"
-  | "og:video"
-  | "img"
-  | "img-srcset"
-  | "source"
-  | "source-srcset"
-  | "video"
-  | "video-poster";
-export type MediaRef = { url: string; kind: MediaKind; source: MediaSource };
-export type ExtractedPage = { title: string | null; headline: string | null; media: MediaRef[] };
 export type ExtractLimits = { maxMediaRefs: number; maxUrlLength: number; maxHtmlNodes: number };
 
-const MAX_TEXT_LENGTH = 300;
 const MAX_SRCSET_LENGTH = 16 * 1024;
 const MAX_SRCSET_CANDIDATES = 20;
 
