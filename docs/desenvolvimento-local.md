@@ -52,15 +52,31 @@ O caminho de `--arquivo` é relativo a `fetcher/`. O arquivo tem uma URL por lin
 
 > **Aviso:** o script faz **requisições reais a partir da máquina de quem roda** (o IP, a rede e o DNS são os seus). Use só com **páginas públicas**. O resultado pode variar com a rede, o DNS, CDNs, bloqueio de User-Agent e desafios anti-bot, e não reproduz o Cloud Run.
 
-Saída, em texto: URL final, título, manchete, quantas mídias foram listadas, tentadas e baixadas; para cada mídia, o content-type, o tamanho e os 12 primeiros caracteres do SHA-256, ou a categoria do erro; e tempos por fase (página, extração, mídias) e total. Com `--arquivo`, as URLs rodam uma de cada vez e há um resumo no fim (quantas deram certo e quantas vezes cada categoria de erro apareceu, na página e nas mídias). Exemplo real:
+Saída, em texto:
+- URL final, título, manchete;
+- quantas mídias foram listadas, em quantos grupos, quantas foram selecionadas, tentadas e baixadas;
+- o sinal "a página possivelmente depende de JavaScript", quando houver, marcado como heurística;
+- uma linha por grupo, em ordem de ranking, com a pontuação (`score`, para calibrar os pesos) e a situação do representante: baixada (content-type, tamanho e os 12 primeiros caracteres do SHA-256), erro (categoria e, em `upstream_status`, o código HTTP) ou ignorada (motivo), mais quantas variantes ficaram de fora;
+- tempos por fase (página, extração, mídias) e total.
+
+Um erro HTTP da página aparece como `erro: upstream_status (HTTP 403)`. Com `--arquivo`, as URLs rodam uma de cada vez e há um resumo no fim: quantas deram certo, quantas vezes cada categoria de erro apareceu (na página e nas mídias) e quantas mídias foram ignoradas por motivo. Regras de seleção e motivos: `docs/fetcher.md`, "Seleção de mídias (heurística)".
+
+Formato, com a fixture `newsArticleFixture` de `fetcher/src/testing.ts` e rede simulada (não é um site real; os tempos aparecem zerados porque o relógio foi fixado):
 
 ```
-URL: https://example.com/
-  URL final: https://example.com/
-  título: Example Domain
-  manchete: (nenhum)
-  mídias: 0 listadas, 0 tentadas, 0 baixadas
-  tempos: página 118 ms · extração 64 ms · mídias 0 ms · total 182 ms
+URL: https://noticias.example/materia
+  URL final: https://noticias.example/materia
+  título: Matéria de exemplo
+  manchete: Manchete inventada
+  mídias: 24 listadas em 10 grupos, 4 selecionadas, 4 tentadas, 3 baixadas
+    grupo 1 · pontuação 100 · baixada  image/jpeg  1 bytes  sha256 2d711642b726  image  https://cdn.example/og/capa-1200.jpg
+    grupo 2 · pontuação 20 · baixada  image/jpeg  1 bytes  sha256 a1fce4363854  image  https://noticias.example/fotos/principal-1600.jpg  (+7 variantes)
+    grupo 3 · pontuação 20 · baixada  image/avif  1 bytes  sha256 594e519ae499  image  https://noticias.example/fotos/segunda-1600.avif  (+7 variantes)
+    grupo 4 · pontuação 20 · ignorada: formato não analisável (SVG)  image  https://noticias.example/graficos/evolucao.svg
+    grupo 5 · pontuação -10 · erro: upstream_status (HTTP 404)  image  https://noticias.example/fotos/relacionada.jpg
+    grupo 6 · pontuação -70 · ignorada: ícone ou elemento de interface  image  https://noticias.example/assets/marca.png
+    ...
+  tempos: página 0 ms · extração 0 ms · mídias 0 ms · total 0 ms
 ```
 
 Garantias, todas com teste em `fetcher/scripts/try-fetch.test.ts`:

@@ -38,13 +38,21 @@ Serviço isolado que recebe a URL enviada pelo usuário, baixa a página e as m�
 Resposta `200`, `application/x-ndjson`, com uma linha JSON por evento:
 
 ```
-{"type":"page","finalUrl":"...","title":"...","headline":"...","media":[{"url":"...","kind":"image","source":"og:image"}, ...]}
-{"type":"media","url":"...","kind":"image","source":"img","contentType":"image/jpeg","size":12345,"sha256":"<hex>","data":"<base64>"}
-{"type":"media_error","url":"...","kind":"image","source":"img","error":"blocked"}
+{"type":"page","finalUrl":"...","title":"...","headline":"...","possiblyNeedsJavaScript":false,"media":[{"url":"...","kind":"image","source":"og:image","group":1,"score":100,"selected":true,"skipReason":null}, ...]}
+{"type":"media","url":"...","kind":"image","source":"img","group":2,"contentType":"image/jpeg","size":12345,"sha256":"<hex>","data":"<base64>"}
+{"type":"media_error","url":"...","kind":"image","source":"img","group":3,"error":"upstream_status","httpStatus":404}
+{"type":"media_error","url":"...","kind":"image","source":"img","group":4,"error":"blocked"}
 {"type":"done"}
 ```
 
-- `media` lista todas as referências encontradas, até 200. Só as primeiras 20 são baixadas, começando por og:image/og:video e seguindo a ordem do documento.
+- `media` lista todas as referências encontradas, até 200, na ordem de coleta (og:image, twitter:image e og:video primeiro, depois a ordem do documento). Cada item traz:
+  - `group`: o grupo da mídia (variantes da mesma imagem), numerado pelo ranking (1 = melhor);
+  - `score`: a pontuação do grupo, inteiro entre −1000 e 1000, para calibrar os pesos;
+  - `selected`: se será baixada;
+  - `skipReason`: `null` quando selecionada; senão `variant` (outra variante do grupo foi a escolhida), `icon` (ícone ou elemento de interface), `unsupported_format` (SVG), `limit` (passou de `maxSelectedMedia`) ou `other` (reservado; aceito, mas não emitido hoje).
+- Só as selecionadas são baixadas, no máximo `maxSelectedMedia` (8), em ordem de grupo. Ver "Seleção de mídias (heurística)".
+- `possiblyNeedsJavaScript` é um sinal heurístico, nunca certeza. Ver "Sinal de página montada por JavaScript".
+- `httpStatus` só aparece com `upstream_status`: o número do status HTTP que o site respondeu (100 a 599), nada do corpo nem dos cabeçalhos.
 - A resposta é transmitida em streaming (chunked). A página de cotas do Cloud Run diz que o limite de 32 MiB por resposta HTTP/1 não se aplica com `Transfer-Encoding: chunked` ou streaming.
 - Os campos `title`, `headline` e `url` são texto controlado por terceiros. Quem exibir esse texto precisa escapá-lo.
 
@@ -57,7 +65,7 @@ Erros:
 | 404 / 405 | Rota ou método errado | genérico |
 | 413 | Corpo acima de 4 KiB | genérico |
 | 415 | Content-Type diferente de JSON | genérico |
-| 422 | Falha ao buscar a página | `{"error":"<categoria>","message":"<texto genérico>"}` |
+| 422 | Falha ao buscar a página | `{"error":"<categoria>","message":"<texto genérico>"}`; com `upstream_status`, também `"httpStatus":<número>` |
 | 431 | Cabeçalhos acima de 8 KiB | (Node) |
 | 500 | Erro inesperado | `{"error":"Erro interno"}` |
 | 503 | Instância ocupada: 2 requisições já em andamento, ou fila do worker de extração cheia | `{"error":"Serviço ocupado"}` e `Retry-After: 1` |
@@ -72,10 +80,10 @@ Categorias, que também aparecem em `media_error`:
 | `too_large` | Conteúdo grande demais |
 | `unsupported_type` | Tipo não suportado |
 | `too_many_redirects` | Redirecionamentos demais |
-| `upstream_status` | O site respondeu com erro |
+| `upstream_status` | O site respondeu com erro (status fora de 2xx, ou redirecionamento sem `Location`) |
 | `network` | Falha de rede |
 
-As mensagens nunca contêm IP, URL, hostname ou texto do sistema operacional.
+As mensagens nunca contêm IP, URL, hostname ou texto do sistema operacional. Em `upstream_status`, o `FetchError` guarda o `httpStatus` (só o número, e só se for inteiro de 100 a 599), que vai no corpo do 422 e na linha `media_error`.
 
 Logs: uma linha JSON por requisição, com método, rota normalizada, status, duração, resultado e `domainHash`. O `domainHash` é um HMAC-SHA-256 truncado do hostname com chave aleatória gerada na inicialização do processo e nunca gravada. Ele correlaciona requisições só dentro da mesma instância e não se reverte por dicionário (um SHA-256 sem chave dos domínios populares se reverteria).
 
@@ -166,8 +174,8 @@ Os testes usam resolvedor e transporte injetados. A única "política de teste" 
 | Página inteira (HTML + mídias) | 30 s | Cabe no fluxo SSE da API; mídias pendentes viram `timeout`, e o resto do relatório segue. |
 | HTML descompactado | 2 MiB | Páginas de notícia raramente passam disso. **Não limita a memória do parse5:** uma página hostil de cerca de 55 KB gera milhões de nós. Quem limita é o heap do worker de extração. |
 | Cada mídia descompactada | 15 MiB | Cobre fotos de câmera e celular em alta resolução e clipes curtos; bem abaixo dos 100 MB da ExifTools. O limite da Cloud Vision ainda deve ser conferido na documentação oficial antes da Fase 5. Vídeos maiores viram `too_large` e entram no relatório como limitação. |
-| Mídia agregada por página | 60 MiB | 20 × 15 MiB daria 300 MiB por requisição; o teto agregado mantém a instância em 1 GiB com concorrência baixa. |
-| Mídias baixadas por página | 20 | Custo e tempo; as mais relevantes (og:image) vêm primeiro. |
+| Mídia agregada por página | 60 MiB | 8 × 15 MiB daria 120 MiB por requisição; o teto agregado mantém a instância em 1 GiB com concorrência baixa. |
+| Mídias selecionadas (baixadas) por página (`maxSelectedMedia`) | 8 | Substitui o antigo teto de 20 downloads. Uma matéria típica tem 1 imagem principal e poucas no corpo; 8 cabem em 2 rodadas de 4 downloads; 60 MiB / 8 dá cerca de 7,5 MiB por mídia; as requisições de saída por chamada caem de 126 para 54 ((1 + 8) × 6); o custo das APIs da Fase 5 é por mídia. Só reduzível, como os demais. |
 | Downloads simultâneos | 4 | Equilibra tempo total e pressão sobre o site de origem. |
 | Referências listadas | 200 | Evita resposta gigante em páginas com milhares de imagens. |
 | Nós HTML percorridos | 100 000 | Teto de CPU da varredura, que é iterativa e sem recursão. Atua depois do parse e **não limita o parse em si**: a memória e a CPU do parse5 são limitadas pelo worker. |
@@ -188,27 +196,80 @@ Content-types aceitos:
 - imagens: `image/jpeg` (e o apelido `image/jpg`), `png`, `gif`, `webp`, `avif`, `heic`, `heif` e `tiff`;
 - vídeos: `video/mp4`, `webm` e `quicktime`.
 
-SVG fica de fora porque é XML e pode conter script.
+SVG fica de fora porque é XML e pode conter script. Quando dá para reconhecê-lo antes do download (nome de arquivo `.svg`/`.svgz` ou `<source type="image/svg+xml">`), ele é listado como ignorado (`unsupported_format`), sem conexão. Um SVG servido sem essa extensão ainda é baixado e recusado pelo content-type (`unsupported_type`).
 
 ## Extração de HTML
 
 Usa parse5 (WHATWG, o mesmo algoritmo dos navegadores) sem executar script e sem buscar recurso nenhum.
-- **Coleta:** `meta property|name = og:image[:url|:secure_url]`, `og:video[...]` e `og:title`; `img[src|srcset]`; `source[src|srcset]` dentro de `picture`/`video`; `video[src|poster]`; `<title>`; o primeiro `<h1>`.
+- **Coleta:** `meta property|name = og:image[:url|:secure_url]`, `twitter:image[:src]`, `og:video[...]` e `og:title`; `img[src|srcset]`; `source[src|srcset]` dentro de `picture`/`video`; `video[src|poster]`; `<title>`; o primeiro `<h1>`.
 - **Coleta com teto:** os valores brutos são deduplicados já na coleta e param em 4 × `maxMediaRefs` (800) por lista (og e corpo), antes de resolver as URLs. Sem esse teto, 100 mil nós com `srcset` gerariam milhões de entradas e de `new URL` (achado 7 da revisão). A folga cobre valores inválidos e variações que viram a mesma URL (por exemplo, fragmentos diferentes).
 - **Resolução:** honra o primeiro `<base href>` http(s); descarta `data:`, `javascript:`, `blob:` e outros esquemas; remove fragmento e duplicadas.
 - **Fora da varredura:** conteúdo de `<template>`, `<script>`, comentários, atributos e `<noscript>` (que o parse5 trata como texto).
 - **Charset:** vem do cabeçalho `Content-Type`. Se for desconhecido ou estiver ausente, usa UTF-8. Não há detecção por `<meta charset>`.
+
+### Seleção de mídias (heurística)
+
+Decisão de produto: o sistema escolhe sozinho as imagens principais, para usuários leigos, e o relatório mostra o que foi analisado e o que foi ignorado, com o motivo. Tudo roda dentro do worker de extração (`extract.ts` e `select.ts`), com os mesmos limites de heap, prazo e nós. **São regras heurísticas, determinísticas e revisáveis; nenhuma delas afirma o que a imagem é.**
+
+**Grupos (variantes da mesma mídia).** Vêm da estrutura do HTML, sem adivinhar por padrão de URL:
+- todos os candidatos de um `srcset` e o `src` do mesmo `<img>`;
+- todas as `<source>` de um `<picture>` e o `<img>` filho direto dele;
+- o `src` de um `<video>` e as `<source>` filhas dele (o `poster` é grupo próprio);
+- cada valor distinto de og:image, twitter:image e og:video é um grupo próprio;
+- a mesma URL (já resolvida, sem fragmento) em dois elementos une os dois grupos, se forem do mesmo tipo (imagem ou vídeo), e a URL é listada uma vez só.
+
+**Variante baixada.** A de maior descritor `w`, se algum candidato tiver `w`; senão a de maior `x` (um `src` de `<img>` e um candidato sem descritor contam como 1x); senão a primeira em ordem de coleta. Empate fica com a primeira. Candidato SVG nunca é escolhido; um grupo só de SVG fica como `unsupported_format`. As outras variantes ficam como `variant`.
+
+**Pontuação.** Cada sinal conta uma vez por grupo, venha de qual membro vier (sinais como bits, somados). A soma é limitada a −1000..1000.
+
+| Sinal | Peso | Observação |
+| --- | --- | --- |
+| og:image, og:video, twitter:image | +100 | A página declara a mídia principal. |
+| Ancestral `<article>`, `<main>` ou `<figure>` | +20 | Conteúdo da página. |
+| Ancestral `<nav>` ou `<aside>`; `<header>` ou `<footer>` fora de article/main | −30 | O `<header>` de um `<article>` é o topo da matéria e não rebaixa. |
+| `role="presentation"` ou `aria-hidden="true"` no elemento ou no `<picture>` | −40 | Decoração, segundo a própria página. |
+| Palavra icon(s), logo(s), sprite(s), avatar(s) ou favicon em `class`, `id`, `alt` ou no nome do arquivo | −40 | Palavra inteira: trechos de `[a-z0-9]` depois de passar para minúsculas. `site-logo` conta; `logotipo` e `siteLogo` não. |
+| `width` ou `height` declarado até 64 | −60 | Só os dígitos iniciais do atributo (`24`, `24px`); porcentagem não conta. |
+| `width` e `height` declarados até 2 | −100 | Pixel de rastreamento (soma com o anterior). |
+
+- **Exclusão:** grupo com pontuação até −40 nunca é baixado (motivo `icon`), mesmo sobrando vaga. Só ancestral de layout (−30) rebaixa sem excluir. og:image com "logo" no nome (+100 − 40 = 60) continua elegível.
+- **Ordem:** pontuação decrescente, empate pela ordem de coleta. O número do grupo é a posição no ranking. Os `maxSelectedMedia` (8) primeiros grupos elegíveis são selecionados; os demais ficam como `limit`.
+- **Defesas:** cada atributo e o nome do arquivo são cortados em 1 KiB antes de procurar palavras, e `width`/`height` em 32 caracteres (até 6 dígitos). Os laços são lineares, sem regex com repetição aninhada. A varredura guarda os bits de ancestrais numa pilha paralela de números, sem objeto por item.
+
+**Limitações (revisar com páginas reais, usando o `score` impresso pelo `try-fetch`):**
+- Os pesos foram escolhidos à mão, sem calibração com páginas reais.
+- `aria-hidden` e `role="presentation"` podem excluir slides reais de carrossel: sites escondem dos leitores de tela os slides fora da vista.
+- Logos e marcas podem ser justamente o objeto da verificação (por exemplo, uma marca falsificada). A exclusão como `icon` é heurística e revisável; o item continua listado, com o motivo.
+- Se a maior variante passar do limite de 15 MiB, o grupo vira `too_large`. **Melhoria futura (não implementada):** tentar a próxima variante.
+- Grupos, pontuação e seleção usam só as referências listadas (até 200). Variantes além da 200ª não entram, e um grupo pode ficar sem a maior variante.
+- Imagens de CSS (`background-image`), de `<noscript>` e as carregadas por JavaScript (lazy-load com `data-src`) não são vistas.
+- Dimensões só valem quando declaradas no HTML; um ícone sem `width`/`height` e sem palavra-chave passa como imagem comum (rebaixado só se estiver em área de layout).
+- Palavras-chave só em inglês e em minúsculas depois da conversão; `siteLogo` ou nomes em português não são reconhecidos.
+- SVG só é reconhecido pela extensão ou pelo `type` da `<source>`.
+
+### Sinal de página montada por JavaScript
+
+`possiblyNeedsJavaScript` é `true` quando, ao mesmo tempo:
+- nenhuma mídia foi listada;
+- o texto visível do documento tem menos de 500 caracteres (sem contar espaços, nem texto dentro de `script`, `style`, `noscript`, `template`, `title` e `textarea`);
+- há pelo menos um `<script>`, **ou** um ponto de montagem vazio: elemento com `id` `root`, `app`, `__next`, `__nuxt` ou `___gatsby` sem elementos filhos.
+
+É heurística, nunca certeza. Falsos positivos: página legítima curta e sem imagens que carrega algum script. Falsos negativos: aplicação de página única que pré-renderiza texto mas monta as imagens por JavaScript, ou página com uma única imagem de interface. Uma página estática curta, sem script e sem mídia (como example.com) não recebe o sinal. A API e a interface devem apresentar o sinal como possibilidade ("a página possivelmente depende de JavaScript; as mídias podem não ter sido vistas"), nunca como fato.
 
 ### Extração isolada em worker
 
 A revisão de segurança da Fase 3 mostrou que o parse5, por montar a árvore inteira, tem dois casos patológicos com HTML pequeno: explosão de memória na reconstrução de elementos de formatação (cerca de 73 KB derrubavam o processo por falta de heap) e CPU quadrática com tags de fechamento órfãs (2 MiB passariam de 3 minutos de CPU síncrona, com o event loop parado). Por isso o parse e a extração rodam fora do event loop principal (`extract-pool.ts` e `extract-worker.ts`):
 
 - **Um worker novo por extração**, encerrado com `terminate()` em `finally`: no sucesso, no erro, no prazo e quando quem chamou cancela a requisição. Nenhum estado passa de uma requisição para outra.
-- **Entrada e saída:** o worker recebe só o HTML decodificado, a URL base e três limites numéricos (`maxMediaRefs`, `maxUrlLength` e `maxHtmlNodes`), e devolve dados simples (título, manchete e referências). Roda com `execArgv: []` e `env: {}`.
+- **Entrada e saída:** o worker recebe só o HTML decodificado, a URL base e quatro limites numéricos (`maxMediaRefs`, `maxUrlLength`, `maxHtmlNodes` e `maxSelectedMedia`), e devolve dados simples (título, manchete, referências com grupo e seleção, e o sinal de JavaScript). Roda com `execArgv: []` e `env: {}`.
 - **O código do worker não importa módulos de rede, disco ou processo.** Um teste percorre o grafo de imports, incluindo parse5 e entities, e exige que o único módulo nativo seja `node:worker_threads`.
 - **O worker NÃO é uma sandbox.** Ele tem `fetch`, `process` e `import()` dinâmico como globais; um teste confirma isso. Uma falha explorável no parser, rodando no worker, poderia usar esses globais para fazer requisições, ler o ambiente do processo ou carregar módulos. **O isolamento é de memória e de CPU** (heap limitado, prazo, `terminate()` e a validação da mensagem no processo principal), não de capacidades. A defesa contra o que o worker poderia alcançar continua sendo a da instância: conta de serviço sem papéis IAM, nenhum segredo no ambiente e o IAM do Cloud Run.
 - **Limites:** `resourceLimits` com 128 MiB de old generation e 32 MiB de young. O estouro chega como `ERR_WORKER_OUT_OF_MEMORY` e vira `too_large`; o prazo de 2,5 s (ou o cancelamento) vira `timeout`; qualquer outra falha vira `network`.
-- **Saída validada no processo principal** (`worker-message.ts`): a mensagem do worker é tratada como não confiável. Só passa um objeto com exatamente `title`, `headline` e `media`. `title` e `headline` precisam ser `null` ou texto bem formado (sem surrogate solto) de até 300 caracteres; o `extract.ts` aplica `toWellFormed()` depois do corte. `media` precisa ser um array de até `maxMediaRefs` itens, cada um com exatamente `url`, `kind` e `source`. A `url` precisa ser http ou https, ter até `maxUrlLength` e vir **na forma normalizada** (`new URL(url).href === url`), que é o que o worker legítimo sempre envia. Espaços, quebras de linha, maiúsculas ou porta padrão explícita são recusados, não corrigidos. `kind` e `source` precisam ser dos valores conhecidos. Qualquer desvio vira `network`. Userinfo e porta não padrão na forma normalizada passam, porque podem vir de uma página real; o download dessas URLs é bloqueado (`blocked`) sem abrir conexão. A validação não carrega o parse5: os tipos e valores aceitos ficam em `media.ts`.
+- **Saída validada no processo principal** (`worker-message.ts`): a mensagem do worker é tratada como não confiável. Só passa um objeto com exatamente `title`, `headline`, `media` e `possiblyNeedsJavaScript`. `title` e `headline` precisam ser `null` ou texto bem formado (sem surrogate solto) de até 300 caracteres; o `extract.ts` aplica `toWellFormed()` depois do corte. `possiblyNeedsJavaScript` precisa ser booleano, e só pode ser `true` com `media` vazio. `media` precisa ser um array de até `maxMediaRefs` itens, cada um com exatamente `url`, `kind`, `source`, `group`, `score`, `selected` e `skipReason`:
+  - `group` inteiro de 1 ao número de itens; `score` inteiro de −1000 a 1000;
+  - `selected` booleano; `skipReason` é `null` exatamente quando `selected` é `true`, e senão um dos motivos conhecidos;
+  - cada grupo tem exatamente um item que não é `variant`, e todos os itens do grupo têm o mesmo `kind` e o mesmo `score`;
+  - no máximo `maxSelectedMedia` itens selecionados. A `url` precisa ser http ou https, ter até `maxUrlLength` e vir **na forma normalizada** (`new URL(url).href === url`), que é o que o worker legítimo sempre envia. Espaços, quebras de linha, maiúsculas ou porta padrão explícita são recusados, não corrigidos. `kind` e `source` precisam ser dos valores conhecidos. Qualquer desvio vira `network`. Userinfo e porta não padrão na forma normalizada passam, porque podem vir de uma página real; o download dessas URLs é bloqueado (`blocked`) sem abrir conexão. A validação não carrega o parse5: os tipos e valores aceitos ficam em `media.ts`.
 - **Concorrência:** no máximo 2 workers por instância, com fila de até 4; fila cheia vira 503. O prazo conta a partir da vaga; a espera na fila é limitada pelo prazo da página (30 s). Com o teto de 2 requisições em andamento, a fila não chega a encher; ela é defesa em profundidade.
 - **Inicialização:** `main.ts` faz uma extração mínima antes de escutar a porta. Se o arquivo do worker não estiver na imagem, o processo sai com erro em vez de falhar em toda requisição. Um teste sobe `node src/main.ts` (o mesmo comando do Dockerfile) e outro confere que o `.dockerignore` não remove nenhum módulo de produção.
 
@@ -243,7 +304,7 @@ Pior caso: 90 + 300 + R × 126 MiB, em que R é o número de requisições em an
 Achados 5 e 8 da primeira revisão de segurança da Fase 3, e o 503 da segunda. A API precisa cumprir isto quando passar a chamar o fetcher.
 
 1. **Uma única mensagem ao usuário para `blocked` e para falha de resolução de nome.** Hoje um nome que existe e resolve para IP privado devolve `blocked`, e um nome inexistente devolve `network`. Se a API repassar essa diferença, o usuário consegue enumerar nomes internos (por exemplo, zonas privadas do Cloud DNS, se um dia houver VPC). A API deve mostrar o mesmo texto genérico para `blocked` e para `network`, tanto no erro da página quanto em `media_error`. A categoria exata pode ir para métricas internas, nunca para a tela nem para a resposta da API. Pelo mesmo motivo, um DNS que não responde pode chegar como `network` ou como `timeout`, conforme o número de servidores DNS e a plataforma ("Resolução de DNS"). A API deve tratar as duas categorias da mesma forma na mensagem ao usuário, sem que a diferença entre elas apareça na tela.
-2. **Limite de taxa por usuário e por IP**, antes de chamar o fetcher. Uma única chamada a `/fetch` pode gerar até 126 requisições de saída, ou seja, 1 página + 20 mídias, cada uma com até 5 redirecionamentos ((1 + 20) × 6). Ela também pode baixar cerca de 62 MiB (2 MiB de HTML + 60 MiB de mídia) de um alvo escolhido pelo usuário. Sem limite, a plataforma vira amplificador contra terceiros. O limite precisa valer por conta Google (o `sub` do ID token) e por IP de origem, para que várias contas no mesmo IP, ou um IP com várias contas, não escapem. Os valores e onde guardar os contadores ficam para a Fase 4. Contadores com estado exigem decisão, porque a plataforma é stateless.
+2. **Limite de taxa por usuário e por IP**, antes de chamar o fetcher. Uma única chamada a `/fetch` pode gerar até 54 requisições de saída, ou seja, 1 página + 8 mídias selecionadas, cada uma com até 5 redirecionamentos ((1 + 8) × 6). Ela também pode baixar cerca de 62 MiB (2 MiB de HTML + 60 MiB de mídia) de um alvo escolhido pelo usuário. Sem limite, a plataforma vira amplificador contra terceiros. O limite precisa valer por conta Google (o `sub` do ID token) e por IP de origem, para que várias contas no mesmo IP, ou um IP com várias contas, não escapem. Os valores e onde guardar os contadores ficam para a Fase 4. Contadores com estado exigem decisão, porque a plataforma é stateless.
 3. **Tratar `503` com `Retry-After`.** O fetcher responde `503 {"error":"Serviço ocupado"}` com `Retry-After: 1` quando a instância já tem 2 requisições em andamento ou a fila do worker está cheia. A API deve:
    - tentar de novo poucas vezes (por exemplo, até 2), com espera curta que respeite o `Retry-After` e um limite total que caiba no prazo da requisição do usuário;
    - esgotadas as tentativas, mostrar ao usuário uma mensagem clara, por exemplo "O serviço está ocupado. Tente de novo em alguns instantes.", sem repassar status, cabeçalhos ou qualquer detalhe interno do fetcher.
@@ -253,11 +314,13 @@ Achados 5 e 8 da primeira revisão de segurança da Fase 3, e o 503 da segunda. 
    - descartar tudo no `finally` da requisição, como o resto da plataforma (stateless).
 
    O fetcher corta quem não lê por 10 s ou passa de 60 s, mas isso é a última linha de defesa, não o ritmo normal.
+5. **`httpStatus` em `upstream_status`.** A API pode mostrar o código ao usuário (por exemplo, "o site respondeu 403") só quando a categoria for `upstream_status`, e só depois de conferir que é inteiro de 100 a 599. As regras do item 1 não mudam: `blocked`, `network` e `timeout` continuam sem detalhe.
+6. **Seleção e sinais no relatório.** O relatório deve mostrar o que foi analisado e o que foi ignorado, com o motivo em linguagem simples (variante da mesma imagem, ícone ou elemento de interface, formato não analisável, limite de mídias). Deve deixar claro que a escolha é automática e heurística, e que uma mídia ignorada (inclusive um logo) pode ser relevante. `possiblyNeedsJavaScript` é apresentado como possibilidade, nunca como fato. O `score` é para calibração interna; não precisa ir para a tela.
 
 ## Decisões abertas (sem implementação nesta fase)
 
 - **Mídia dentro de `<noscript>`:** sites com lazy-load colocam a imagem real ali. Extrair exigiria parsear o conteúdo do noscript como fragmento.
-- **`meta name=twitter:image`:** é comum em páginas sem og:image. Decidir se entra como fonte de mídia.
+- **Variante seguinte quando a maior passa do limite:** hoje o grupo vira `too_large`. Ver "Seleção de mídias (heurística)".
 
 ## Dívida técnica
 
@@ -268,6 +331,7 @@ Achados 5 e 8 da primeira revisão de segurança da Fase 3, e o 503 da segunda. 
 
 Todos os testes usam DNS e transporte simulados, ou um servidor HTTP local em 127.0.0.1. Ainda não foram verificados:
 - Sites reais: variedade de HTML, charset sem cabeçalho, lazy-load, imagens servidas por JavaScript.
+- Seleção de mídias e sinal de JavaScript: só foram testados com fixtures escritas à mão que imitam a estrutura de páginas reais (srcset, `<picture>`, ícones no cabeçalho, casca de SPA). Os pesos e os limiares ainda não foram calibrados com páginas reais.
 - Sites e CDNs que bloqueiam o User-Agent próprio, exigem cookies ou aplicam desafio anti-bot (Cloudflare e afins).
 - Redes sociais (Instagram, X, Facebook, TikTok), que costumam exigir login ou JavaScript.
 - HTTPS de ponta a ponta: SNI e verificação de certificado usam o hostname, mas não há teste com certificado TLS real.
