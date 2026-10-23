@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { Readable } from "node:stream";
+import { getDefaultHighWaterMark, Readable } from "node:stream";
 import { describe, test } from "node:test";
 import { brotliCompressSync, constants, deflateSync, gzipSync } from "node:zlib";
 
@@ -46,12 +46,29 @@ describe("readLimited", () => {
     });
   }
 
-  test("corpo acima do limite: aborta sem ler tudo", async () => {
-    const stream = countingStream(Buffer.alloc(10 * MIB));
-    await assertRejects(readLimited(stream, undefined, 1 * MIB, never), "too_large");
-    assert.ok(stream.pulled() <= 1 * MIB + 64 * KIB, `puxou ${stream.pulled()} bytes`);
-    assert.ok(stream.destroyed);
-  });
+  // O que se lê além do limite é constante (buffers dos streams), não proporcional ao corpo.
+  // Teto derivado de readLimited (fonte -> wireLimiter), com hwm = getDefaultHighWaterMark(false):
+  //   chunk que cruza o limite (o wireLimiter conta e falha)   1 chunk
+  //   buffer de leitura da fonte (Readable)                     até hwm + 1 chunk
+  //   buffer de escrita do wireLimiter (Transform)              até hwm + 1 chunk
+  //   chunk em trânsito no pipe                                 1 chunk
+  // Total: limite + 2 × hwm + 4 × chunk. No CI (Linux, hwm 16 KiB, chunk 16 KiB) foram
+  // limite + 80 KiB; no Windows, limite + 32 KiB. A diferença é só a ordem dos eventos.
+  for (const bodySize of [10 * MIB, 50 * MIB]) {
+    const data = Buffer.alloc(bodySize);
+    for (const chunk of [1 * KIB, 16 * KIB, 64 * KIB]) {
+      test(`corpo de ${bodySize / MIB} MiB acima do limite, chunk de ${chunk / KIB} KiB: lê no máximo limite + buffers`, async (t) => {
+        const limit = 1 * MIB;
+        const ceiling = limit + 2 * getDefaultHighWaterMark(false) + 4 * chunk;
+        const stream = countingStream(data, chunk);
+        await assertRejects(readLimited(stream, undefined, limit, never), "too_large");
+        const excess = stream.pulled() - limit;
+        t.diagnostic(`puxou ${stream.pulled()} bytes = limite + ${excess / KIB} KiB (teto: limite + ${(ceiling - limit) / KIB} KiB)`);
+        assert.ok(stream.pulled() <= ceiling, `puxou ${stream.pulled()} bytes; teto ${ceiling}`);
+        assert.ok(stream.destroyed);
+      });
+    }
+  }
 
   test("bomba gzip: aborta logo depois do limite descompactado", async () => {
     const bomb = gzipSync(Buffer.alloc(200 * MIB)); // ~200 KiB compactados
