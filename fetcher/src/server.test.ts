@@ -439,3 +439,143 @@ describe("serviço do fetcher: prazos de escrita da resposta", () => {
     }
   });
 });
+
+describe("serviço do fetcher: log de respostas que não terminam", () => {
+  const MIB = 1024 * 1024;
+  // Marcadores únicos: se qualquer pedaço da URL ou do token aparecer no log, o teste acusa.
+  const SECRET_URL = "https://marcador-unico-7f3a.example/caminho-secreto-9c1e?q=segredo-4b2d";
+  const SECRET_PARTS = ["marcador-unico-7f3a", "caminho-secreto-9c1e", "segredo-4b2d", GOOD_TOKEN];
+  const bytes = Buffer.alloc(15 * MIB, 7);
+  const bigResult = {
+    finalUrl: SECRET_URL,
+    title: "t",
+    headline: null,
+    media: [],
+    downloads: [1, 2, 3, 4].map((i) => ({
+      url: `https://cdn.example/${i}.jpg`,
+      kind: "image" as const,
+      source: "img" as const,
+      ok: true as const,
+      contentType: "image/jpeg",
+      size: bytes.length,
+      sha256: "0".repeat(64),
+      bytes,
+    })),
+  };
+
+  // Chamador por socket cru que envia o pedido e não lê a resposta.
+  function rawCaller(base: string): Socket {
+    const body = JSON.stringify({ url: SECRET_URL });
+    const socket = connect(Number(new URL(base).port), "127.0.0.1", () => {
+      socket.write(
+        `POST /fetch HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer ${GOOD_TOKEN}\r\nContent-Type: application/json\r\n` +
+          `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+      );
+    });
+    socket.pause();
+    socket.on("error", () => {});
+    return socket;
+  }
+
+  async function waitForLog(logs: LogEntry[], timeoutMs = 5_000): Promise<void> {
+    const started = performance.now();
+    while (logs.length === 0 && performance.now() - started < timeoutMs) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+
+  // Espera a linha, dá tempo para uma eventual segunda linha e confere que não há dado do usuário.
+  async function onlyLine(logs: LogEntry[], socket?: Socket): Promise<LogEntry> {
+    await waitForLog(logs);
+    socket?.destroy(); // quem chamou fecha depois: não pode gerar outra linha nem mudar a categoria
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(logs.length, 1, `esperava uma linha: ${JSON.stringify(logs)}`);
+    const serialized = JSON.stringify(logs);
+    for (const part of SECRET_PARTS) assert.ok(!serialized.includes(part), `o log contém ${part}`);
+    const [entry] = logs;
+    assert.ok(entry);
+    assert.deepEqual(Object.keys(entry).sort(), ["domainHash", "durationMs", "method", "outcome", "route", "status"]);
+    assert.equal(entry.method, "POST");
+    assert.equal(entry.route, "/fetch");
+    assert.equal(entry.domainHash, domainHash(SECRET_URL));
+    return entry;
+  }
+
+  test("prazo de inatividade: uma linha stream_idle_timeout, status 200, sem dado do usuário", { timeout: 20_000 }, async () => {
+    const s = await start(async () => bigResult, { streamIdleMs: 300 });
+    try {
+      const entry = await onlyLine(s.logs, rawCaller(s.base));
+      assert.equal(entry.outcome, "stream_idle_timeout");
+      assert.equal(entry.status, 200);
+      assert.ok(entry.durationMs >= 300);
+    } finally {
+      await s.close();
+    }
+  });
+
+  test("prazo total: uma linha stream_total_timeout, nunca client_closed", { timeout: 20_000 }, async () => {
+    const s = await start(async () => bigResult, { streamTotalMs: 400 });
+    try {
+      const entry = await onlyLine(s.logs, rawCaller(s.base));
+      assert.equal(entry.outcome, "stream_total_timeout");
+      assert.equal(entry.status, 200);
+      assert.ok(entry.durationMs >= 400);
+    } finally {
+      await s.close();
+    }
+  });
+
+  test("quem chamou fecha antes de qualquer resposta: client_closed com status 0", { timeout: 20_000 }, async () => {
+    const s = await start((_url, signal) => new Promise((_, reject) => signal.addEventListener("abort", () => reject(new FetchError("timeout")))));
+    try {
+      const socket = rawCaller(s.base);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      socket.destroy();
+      const entry = await onlyLine(s.logs);
+      assert.equal(entry.outcome, "client_closed");
+      assert.equal(entry.status, 0);
+    } finally {
+      await s.close();
+    }
+  });
+
+  test("quem chamou fecha no meio do streaming: client_closed com o status já enviado", { timeout: 20_000 }, async () => {
+    const s = await start(async () => bigResult); // prazos no padrão: quem encerra é o chamador
+    try {
+      const socket = rawCaller(s.base);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      socket.destroy();
+      const entry = await onlyLine(s.logs);
+      assert.equal(entry.outcome, "client_closed");
+      assert.equal(entry.status, 200);
+    } finally {
+      await s.close();
+    }
+  });
+
+  test("erro interno no meio do streaming: internal_error, nunca client_closed", { timeout: 20_000 }, async () => {
+    const broken = { ...bigResult.downloads[0], bytes: { toString: () => { throw new Error("falha interna"); } } };
+    const s = await start(async () => ({ ...bigResult, downloads: [broken as unknown as (typeof bigResult.downloads)[number]] }));
+    try {
+      const socket = rawCaller(s.base);
+      const entry = await onlyLine(s.logs, socket);
+      assert.equal(entry.outcome, "internal_error");
+      assert.equal(entry.status, 200);
+    } finally {
+      await s.close();
+    }
+  });
+
+  test("resposta completa continua gerando exatamente uma linha", async () => {
+    const s = await start(async () => ({ ...bigResult, downloads: [] }));
+    try {
+      const res = await post(s.base, { url: SECRET_URL });
+      await res.text();
+      const entry = await onlyLine(s.logs);
+      assert.equal(entry.outcome, "ok");
+      assert.equal(entry.status, 200);
+    } finally {
+      await s.close();
+    }
+  });
+});

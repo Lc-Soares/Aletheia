@@ -109,13 +109,36 @@ function mediaLine(download: MediaDownload): Record<string, unknown> {
   return { type: "media", url, kind, source, contentType, size, sha256, data: bytes.toString("base64") };
 }
 
+// Respostas que o PRÓPRIO fetcher destruiu. A categoria é registrada antes do destroy(), então o
+// listener de close nunca a confunde com client_closed (ver createFetcherServer).
+type StreamDeadlineOutcome = "stream_idle_timeout" | "stream_total_timeout";
+const SERVER_DESTROYED_OUTCOMES: ReadonlySet<string> = new Set(["stream_idle_timeout", "stream_total_timeout", "internal_error"]);
+
+class StreamDeadline extends Error {
+  readonly outcome: StreamDeadlineOutcome;
+
+  constructor(outcome: StreamDeadlineOutcome) {
+    super(outcome);
+    this.outcome = outcome;
+  }
+}
+
+type StreamSignals = { request: AbortSignal; total: AbortSignal; idleMs: number };
+
 // O prazo de inatividade só corre enquanto se espera o drain (quem chamou não está lendo).
 // As fatias são cortadas nos bytes, não na string, para não partir caracteres UTF-8.
-async function writeLine(res: ServerResponse, value: unknown, signal: AbortSignal, idleMs: number): Promise<void> {
+async function writeLine(res: ServerResponse, value: unknown, signals: StreamSignals): Promise<void> {
   const line = Buffer.from(`${JSON.stringify(value)}\n`, "utf8");
   for (let offset = 0; offset < line.length; offset += WRITE_SLICE_BYTES) {
-    if (!res.write(line.subarray(offset, offset + WRITE_SLICE_BYTES))) {
-      await once(res, "drain", { signal: AbortSignal.any([signal, AbortSignal.timeout(idleMs)]) });
+    if (res.write(line.subarray(offset, offset + WRITE_SLICE_BYTES))) continue;
+    const idle = AbortSignal.timeout(signals.idleMs);
+    try {
+      await once(res, "drain", { signal: AbortSignal.any([signals.request, signals.total, idle]) });
+    } catch (error) {
+      // Classifica pelo estado dos sinais: um prazo do fetcher, ou então quem chamou fechou.
+      if (signals.total.aborted) throw new StreamDeadline("stream_total_timeout");
+      if (idle.aborted) throw new StreamDeadline("stream_idle_timeout");
+      throw error;
     }
   }
 }
@@ -123,16 +146,25 @@ async function writeLine(res: ServerResponse, value: unknown, signal: AbortSigna
 // NDJSON em streaming: uma linha "page", uma por mídia e "done". Os bytes vão em base64.
 // Prazos: total desde o writeHead e inatividade em cada espera de drain. Esgotado qualquer um, a
 // resposta é destruída e a vaga volta pelo finally de handleFetch (achado 1 da terceira revisão).
-async function streamResult(res: ServerResponse, result: PageResult, signal: AbortSignal, limits: Limits): Promise<void> {
-  const streamSignal = AbortSignal.any([signal, AbortSignal.timeout(limits.streamTotalMs)]);
+async function streamResult(
+  res: ServerResponse,
+  result: PageResult,
+  request: AbortSignal,
+  limits: Limits,
+  note: (fields: Partial<LogEntry>) => void,
+): Promise<void> {
+  const signals: StreamSignals = { request, total: AbortSignal.timeout(limits.streamTotalMs), idleMs: limits.streamIdleMs };
   res.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", ...SECURITY_HEADERS });
   try {
     const { finalUrl, title, headline, media } = result;
-    await writeLine(res, { type: "page", finalUrl, title, headline, media }, streamSignal, limits.streamIdleMs);
-    for (const download of result.downloads) await writeLine(res, mediaLine(download), streamSignal, limits.streamIdleMs);
-    await writeLine(res, { type: "done" }, streamSignal, limits.streamIdleMs);
+    await writeLine(res, { type: "page", finalUrl, title, headline, media }, signals);
+    for (const download of result.downloads) await writeLine(res, mediaLine(download), signals);
+    await writeLine(res, { type: "done" }, signals);
     res.end();
   } catch (error) {
+    // Antes do destroy: prazo do fetcher, ou erro interno se não foi quem chamou que fechou.
+    if (error instanceof StreamDeadline) note({ outcome: error.outcome });
+    else if (!request.aborted) note({ outcome: "internal_error" });
     res.destroy();
     throw error;
   }
@@ -155,7 +187,7 @@ async function fetchAndStream(
   try {
     const result = await options.fetchPage(url, controller.signal);
     note({ outcome: "ok" });
-    await streamResult(res, result, controller.signal, limits);
+    await streamResult(res, result, controller.signal, limits, note);
   } catch (error) {
     if (error instanceof OverloadedError) throw busy();
     if (!(error instanceof FetchError)) throw error;
@@ -216,19 +248,34 @@ export function createFetcherServer(options: FetcherServerOptions): Server {
     const note = (fields: Partial<LogEntry>): void => {
       Object.assign(entry, fields);
     };
-    res.on("finish", () => {
+    // Exatamente uma linha por requisição: no finish (terminou) ou no close (não terminou).
+    let logged = false;
+    const writeLog = (status: number, outcome: string): void => {
+      if (logged) return;
+      logged = true;
       options.log({
         method: req.method ?? "",
         route: ROUTES.has(path) ? path : "(outra)",
-        status: res.statusCode,
+        status,
         durationMs: Math.round(performance.now() - started),
         domainHash: entry.domainHash ?? null,
-        outcome: entry.outcome ?? "-",
+        outcome,
       });
+    };
+    res.on("finish", () => writeLog(res.statusCode, entry.outcome ?? "-"));
+    // Fechou sem terminar: se o fetcher destruiu, a categoria já foi registrada antes do destroy();
+    // senão, quem chamou fechou. Status 0 quando nada foi enviado.
+    res.on("close", () => {
+      if (res.writableFinished) return;
+      const outcome = entry.outcome !== undefined && SERVER_DESTROYED_OUTCOMES.has(entry.outcome) ? entry.outcome : "client_closed";
+      writeLog(res.headersSent ? res.statusCode : 0, outcome);
     });
     route(req, res, options, state, path, note).catch(() => {
       if (!res.headersSent) sendJson(res, 500, { error: "Erro interno" });
-      else res.destroy();
+      else if (!res.destroyed) {
+        note({ outcome: "internal_error" }); // antes do destroy: não vira client_closed
+        res.destroy();
+      }
     });
   });
   server.headersTimeout = 10_000;

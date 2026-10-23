@@ -79,6 +79,22 @@ As mensagens nunca contêm IP, URL, hostname ou texto do sistema operacional.
 
 Logs: uma linha JSON por requisição, com método, rota normalizada, status, duração, resultado e `domainHash`. O `domainHash` é um HMAC-SHA-256 truncado do hostname com chave aleatória gerada na inicialização do processo e nunca gravada. Ele correlaciona requisições só dentro da mesma instância e não se reverte por dicionário (um SHA-256 sem chave dos domínios populares se reverteria).
 
+**Exatamente uma linha por requisição**, também quando a resposta não termina. A linha sai quando a resposta termina; se ela fechar antes, sai quando fecha. Nunca há URL, caminho, corpo, token ou domínio em claro, só o mesmo `domainHash`.
+
+| `outcome` | Quando |
+| --- | --- |
+| `ok` | Resposta NDJSON completa. |
+| categoria de `FetchError` (`timeout`, `blocked`...) | Falha ao buscar a página (422). |
+| `unauthorized`, `bad_request`, `bad_content_type`, `body_too_large`, `busy` | Erros 401, 400, 415, 413 e 503. |
+| `stream_idle_timeout` | O fetcher destruiu a resposta porque quem chamou não esvaziou uma fatia de 64 KiB por `streamIdleMs` (10 s). |
+| `stream_total_timeout` | O fetcher destruiu a resposta porque o streaming passou de `streamTotalMs` (60 s). |
+| `client_closed` | Quem chamou fechou a conexão antes do fim, durante a busca ou durante o streaming. |
+| `internal_error` | O fetcher destruiu a resposta por um erro inesperado depois de já ter enviado os cabeçalhos (antes deles, a resposta é o 500 genérico). |
+
+Quando o próprio fetcher destrói a resposta (os dois prazos e `internal_error`), a categoria vem do estado dos sinais e é registrada **antes** do `destroy()`. Por isso essas linhas nunca viram `client_closed`; só vira `client_closed` o fechamento que o fetcher não causou.
+
+**`status`:** o código HTTP já enviado. Numa resposta destruída no meio do streaming, é o 200 que já tinha saído. **`status: 0`** significa que nada foi enviado antes do fechamento (por exemplo, quem chamou desistiu durante a busca da página). Linhas `stream_*` e `client_closed` em volume são o sinal de alguém segurando vagas da instância de propósito.
+
 ## Proteção contra SSRF
 
 Toda URL, seja a do usuário, um redirecionamento ou uma mídia extraída do HTML, passa pelo mesmo caminho (`safeFetch`):
