@@ -7,7 +7,7 @@ export type Limits = {
   maxHtmlBytes: number;
   maxMediaBytes: number;
   maxAggregateMediaBytes: number;
-  maxMediaDownloads: number;
+  maxSelectedMedia: number;
   maxMediaRefs: number;
   mediaConcurrency: number;
   maxRedirects: number;
@@ -33,7 +33,7 @@ export const DEFAULT_LIMITS: Readonly<Limits> = Object.freeze({
   maxHtmlBytes: 2 * MIB,
   maxMediaBytes: 15 * MIB,
   maxAggregateMediaBytes: 60 * MIB,
-  maxMediaDownloads: 20,
+  maxSelectedMedia: 8,
   maxMediaRefs: 200,
   mediaConcurrency: 4,
   maxRedirects: 5,
