@@ -17,18 +17,19 @@ Leia antes de mudanças de arquitetura ou de privacidade:
 - `api/`: API Node.js + TypeScript (Cloud Run)
 - `fetcher/`: serviço isolado que baixa páginas e mídias (Cloud Run)
 - `docs/`: documentação do projeto
+- O `package.json` da raiz declara `workspaces` para `web/`, `api/` e `fetcher/`.
 
 ## Comandos (rodar na raiz)
-- `pnpm install --frozen-lockfile`
-- `pnpm run lint`
-- `pnpm run typecheck`
-- `pnpm run test`
-- `pnpm run check`: roda lint, typecheck e test. **Deve passar antes de concluir qualquer tarefa.**
+- `npm ci` (instala exatamente o que está no `package-lock.json`; use `npm install` só para adicionar pacote, com aprovação)
+- `npm run lint`
+- `npm run typecheck`
+- `npm run test`
+- `npm run check`: roda lint, typecheck e test. **Deve passar antes de concluir qualquer tarefa.**
 
 ## Fluxo de trabalho obrigatório
 1. Leia os arquivos relevantes antes de editar. Para mudança não trivial, proponha um plano curto e espere o OK.
 2. Escreva ou atualize os testes junto com o código. Em código de segurança, escreva o teste primeiro.
-3. Rode `pnpm run check`. Só diga que terminou se passou, e mostre o resultado real. Nunca afirme que testes passaram sem rodar. Se não conseguir rodar, diga isso.
+3. Rode `npm run check`. Só diga que terminou se passou, e mostre o resultado real. Nunca afirme que testes passaram sem rodar. Se não conseguir rodar, diga isso.
 4. Se um teste falhar, corrija a causa. Nunca apague, pule (`skip`, `only`), enfraqueça asserts nem desligue regras de lint ou de tipos para passar.
 5. Trabalhe em branch própria, com commits pequenos e focados. Nunca commite direto na `main` e nunca use `git push --force`.
 
@@ -43,8 +44,8 @@ Leia antes de mudanças de arquitetura ou de privacidade:
 
 ## Dependências
 - Antes de adicionar um pacote, justifique por que o Node nativo não resolve (`fetch`, `crypto`, `node:test`) e pergunte ao usuário.
-- Nunca afrouxe `.npmrc` nem `pnpm-workspace.yaml` (scripts de instalação desligados, idade mínima de versão).
-- Em CI e produção, instale sempre com `--frozen-lockfile`.
+- Nunca afrouxe o `.npmrc` (scripts de instalação desligados, idade mínima de versão, sem dependências via git).
+- Em CI e produção, instale sempre com `npm ci`. Nunca apague o `package-lock.json` para "resolver" um erro.
 
 ## Testes
 - Runner: `node:test` (ou Vitest, se a equipe decidir). Arquivos `*.test.ts` ao lado do código.

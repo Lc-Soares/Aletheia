@@ -1,23 +1,23 @@
 {
   "permissions": {
     "allow": [
-      "Bash(pnpm run lint)",
-      "Bash(pnpm run typecheck)",
-      "Bash(pnpm run test)",
-      "Bash(pnpm run test *)",
-      "Bash(pnpm run check)",
-      "Bash(pnpm install --frozen-lockfile)",
+      "Bash(npm run lint)",
+      "Bash(npm run typecheck)",
+      "Bash(npm run test)",
+      "Bash(npm run test *)",
+      "Bash(npm run check)",
+      "Bash(npm ci)",
       "Bash(git status)",
       "Bash(git diff)",
       "Bash(git diff *)",
       "Bash(git log *)"
     ],
     "ask": [
-      "Bash(pnpm add *)",
-      "Bash(pnpm update *)",
-      "Bash(pnpm install *)",
+      "Bash(npm install)",
       "Bash(npm install *)",
       "Bash(npm i *)",
+      "Bash(npm update *)",
+      "Bash(npx *)",
       "Bash(git push *)",
       "Bash(curl *)",
       "Bash(wget *)"

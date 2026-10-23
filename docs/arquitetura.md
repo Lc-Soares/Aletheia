@@ -32,7 +32,7 @@ A arquitetura é stateless: tudo o que o usuário envia existe apenas na memóri
 | Entrada | Somente link | Menor superfície de ataque e de privacidade | Upload de arquivo |
 | Download de mídia | Uma vez, em memória; os mesmos bytes vão a todas as checagens | Menos requisições e menos tempo de exposição | Passar a URL a cada serviço |
 | Relatório | PDF e JSON gerados no navegador | Nada é retido pelo servidor | Relatório salvo no servidor com link |
-| Pacotes Node | pnpm (ou npm 11.10 ou superior) com idade mínima de versão e scripts de instalação bloqueados | Reduz risco de pacotes comprometidos | Instalação sem restrições |
+| Pacotes Node | npm 11.10 ou superior, com idade mínima de versão (min-release-age) e scripts de instalação bloqueados | Reduz risco de pacotes comprometidos | Instalação sem restrições |
 
 A hospedagem Firebase com encaminhamento ao Cloud Run normalmente exige projeto com faturamento ativo; confirmar na documentação atual antes de implantar.
 

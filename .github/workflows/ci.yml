@@ -22,19 +22,16 @@ jobs:
         with:
           persist-credentials: false
 
-      # A versão do pnpm vem do campo "packageManager" do package.json.
-      - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
+          cache: npm
 
-      - name: Instalar dependências (lockfile congelado, sem scripts)
-        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Instalar dependências (exatamente o package-lock.json, sem scripts)
+        run: npm ci --ignore-scripts
 
       - name: Lint, tipos e testes
-        run: pnpm run check
+        run: npm run check
 
       - name: Auditoria de dependências
-        run: pnpm audit --audit-level=high
+        run: npm audit --audit-level=high

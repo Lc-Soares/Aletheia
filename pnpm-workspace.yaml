@@ -1,8 +1,0 @@
-packages:
-  - web
-  - api
-  - fetcher
-
-# Só instala versões publicadas há pelo menos 7 dias (unidade: minutos).
-# Pacotes comprometidos costumam ser descobertos em horas ou dias.
-minimumReleaseAge: 10080
