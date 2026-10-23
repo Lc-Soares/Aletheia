@@ -1,4 +1,6 @@
 {
   "extends": "../tsconfig.base.json",
+  // Só o fetcher: roda em Node 24, que tem ES2024 (String.prototype.toWellFormed/isWellFormed).
+  "compilerOptions": { "lib": ["ES2024"] },
   "include": ["src"]
 }

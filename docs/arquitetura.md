@@ -51,10 +51,10 @@ Uma verificação é uma única requisição em streaming, do login ao descarte 
 1. O usuário entra com Google e o navegador obtém um ID token.
 2. O navegador envia a URL no corpo de um POST (nunca na query string) e o token no header Authorization.
 3. A API valida o token (assinatura, audiência, expiração, e-mail verificado) e aplica o limite de uso.
-4. A API valida a URL: apenas http e https, portas 80 e 443, resolve o DNS e bloqueia endereços privados, de loopback e link-local (inclusive o servidor de metadados do Google Cloud). A validação se repete a cada redirecionamento.
-5. Um serviço isolado (fetcher) baixa o HTML em memória, com limite de tamanho e de tempo.
-6. A API extrai do HTML as mídias (img, video, og:image), o título ou manchete e qualquer marcação ClaimReview em JSON-LD.
-7. Cada mídia é baixada uma única vez, com limite de tamanho e lista de tipos permitidos, e o SHA-256 é calculado.
+4. A API repassa a URL ao fetcher, um serviço privado que só aceita a conta de serviço da API. O fetcher valida a URL: apenas http e https, portas 80 e 443, resolve o DNS uma vez e bloqueia endereços privados, de loopback e link-local (inclusive o servidor de metadados do Google Cloud). A validação se repete a cada redirecionamento.
+5. O fetcher baixa o HTML em memória, com limite de tamanho e de tempo.
+6. O fetcher extrai do HTML as mídias (img, srcset, video, source, og:image, og:video) e o título ou manchete. A leitura de ClaimReview em JSON-LD entra na Fase 5.
+7. Cada mídia é baixada uma única vez pelo fetcher, com as mesmas validações da URL do usuário, limite de tamanho e lista de tipos permitidos, e o SHA-256 é calculado. Detalhes, limites e regras de implantação em `docs/fetcher.md`.
 8. As checagens rodam em paralelo: ExifTools (EXIF e C2PA), Cloud Vision (Web Detection), Web Risk (reputação da URL) e Fact Check (busca da afirmação extraída).
 9. O agregador junta os sinais e envia cada resultado ao navegador por SSE assim que fica pronto.
 10. O navegador monta o relatório e o usuário baixa PDF ou JSON.

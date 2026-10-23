@@ -46,3 +46,14 @@ jobs:
 
       - name: Build da imagem da API (sem push)
         run: docker build -f api/Dockerfile -t aletheia-api:ci .
+
+  docker-fetcher:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build da imagem do fetcher (sem push)
+        run: docker build -f fetcher/Dockerfile -t aletheia-fetcher:ci .
