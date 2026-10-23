@@ -4,7 +4,7 @@ import fs from "node:fs";
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
-import { FetchError } from "./errors.ts";
+import { FetchError, OverloadedError } from "./errors.ts";
 import { createWorkerExtractor } from "./extract-pool.ts";
 import { type MediaDownload, fetchPage, type PageDeps } from "./fetch-page.ts";
 import { isPublicAddress } from "./ip-policy.ts";
@@ -137,6 +137,12 @@ describe("fetchPage", () => {
     const result = await fetchPage("https://noticias.example/", deps(transport, { pageTotalMs: 150 }));
     assert.equal(failed(result.downloads[0]), "timeout");
     assert.ok(performance.now() - started < 2_000);
+  });
+
+  test("extrator sem vaga (OverloadedError) passa direto, sem virar categoria", async () => {
+    const transport = routeTransport({ "https://noticias.example/": html("<title>x</title>") });
+    const extract = Object.assign(() => Promise.reject(new OverloadedError()), { active: 0 });
+    await assert.rejects(fetchPage("https://noticias.example/", { ...deps(transport), extract }), OverloadedError);
   });
 
   test("falha da página inteira lança erro com categoria", async () => {

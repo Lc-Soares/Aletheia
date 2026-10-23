@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { ByteBudget } from "./body.ts";
-import { FetchError, type FetchErrorCategory, toFetchError } from "./errors.ts";
+import { FetchError, type FetchErrorCategory, OverloadedError, toFetchError } from "./errors.ts";
 import type { Extractor } from "./extract-pool.ts";
 import type { MediaRef } from "./extract.ts";
 import { type FetcherDeps, safeFetch } from "./safe-fetch.ts";
@@ -71,6 +71,7 @@ export async function fetchPage(rawUrl: string, deps: PageDeps, signal?: AbortSi
     const downloads = await downloadAll(extracted.media.slice(0, deps.limits.maxMediaDownloads), deps, pageSignal);
     return { finalUrl: page.finalUrl, title: extracted.title, headline: extracted.headline, media: extracted.media, downloads };
   } catch (error) {
+    if (error instanceof OverloadedError) throw error; // vira 503 no serviço
     throw toFetchError(error, pageSignal);
   } finally {
     controller.abort(); // cancela qualquer download que ainda esteja pendente

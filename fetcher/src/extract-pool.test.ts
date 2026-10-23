@@ -4,7 +4,7 @@ import { builtinModules } from "node:module";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { FetchError, type FetchErrorCategory } from "./errors.ts";
+import { FetchError, type FetchErrorCategory, OverloadedError } from "./errors.ts";
 import { createWorkerExtractor } from "./extract-pool.ts";
 import { extractPage } from "./extract.ts";
 import { DEFAULT_LIMITS, resolveLimits } from "./limits.ts";
@@ -91,6 +91,19 @@ describe("extrator em worker", () => {
     }
     assert.equal(peak, 2);
     assert.equal(extract.active, 0);
+  });
+
+  test("fila limitada a 2 × extractConcurrency: a excedente recebe OverloadedError na hora", { timeout: 30_000 }, async () => {
+    const extract = createWorkerExtractor(resolveLimits({ extractTotalMs: 300 }));
+    const hostile = orphanEndTags(300_000);
+    const accepted = Array.from({ length: 6 }, () => assertRejects(extract(hostile, PAGE, never()), "timeout")); // 2 rodando + 4 na fila
+    const started = performance.now();
+    await assert.rejects(extract(hostile, PAGE, never()), OverloadedError);
+    assert.ok(performance.now() - started < 200);
+    await Promise.all(accepted);
+    assert.equal(extract.active, 0);
+    // Com a fila vazia de novo, volta a aceitar.
+    assert.equal((await extract("<title>ok</title>", PAGE, never())).title, "ok");
   });
 
   test("nenhum limite de extração pode ser aumentado", () => {

@@ -1,6 +1,6 @@
 import { Worker } from "node:worker_threads";
 
-import { FetchError, withDeadline } from "./errors.ts";
+import { FetchError, OverloadedError, withDeadline } from "./errors.ts";
 import type { ExtractedPage } from "./extract.ts";
 import type { Limits } from "./limits.ts";
 
@@ -13,11 +13,13 @@ export type Extractor = ((htmlText: string, pageUrl: string, signal: AbortSignal
 
 const WORKER_URL = new URL("./extract-worker.ts", import.meta.url);
 const YOUNG_GENERATION_MB = 32;
+const QUEUE_PER_SLOT = 2;
 
 type Semaphore = { acquire: (signal: AbortSignal) => Promise<void>; release: () => void };
 
-// No máximo `size` vagas; quem espera na fila desiste quando o sinal abortar.
-function createSemaphore(size: number): Semaphore {
+// No máximo `size` vagas e `maxQueue` à espera (a excedente recebe OverloadedError na hora);
+// quem espera na fila desiste quando o sinal abortar.
+function createSemaphore(size: number, maxQueue: number): Semaphore {
   let free = size;
   const queue: (() => void)[] = [];
   const release = (): void => {
@@ -31,6 +33,7 @@ function createSemaphore(size: number): Semaphore {
       free--;
       return Promise.resolve();
     }
+    if (queue.length >= maxQueue) return Promise.reject(new OverloadedError());
     return new Promise((resolve, reject) => {
       const grant = (): void => {
         signal.removeEventListener("abort", onAbort);
@@ -72,7 +75,7 @@ function startWorker(htmlText: string, pageUrl: string, limits: Limits): Worker 
 }
 
 export function createWorkerExtractor(limits: Limits): Extractor {
-  const slots = createSemaphore(limits.extractConcurrency);
+  const slots = createSemaphore(limits.extractConcurrency, QUEUE_PER_SLOT * limits.extractConcurrency);
   let active = 0;
   const runWorker = async (htmlText: string, pageUrl: string, signal: AbortSignal): Promise<ExtractedPage> => {
     // O prazo conta a partir da vaga: inclui subir o worker, mas não a espera na fila.

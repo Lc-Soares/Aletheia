@@ -14,9 +14,8 @@ Serviço isolado que recebe a URL enviada pelo usuário, baixa a página e as m�
 
    A validação no código é a segunda camada, caso o IAM seja mal configurado.
 4. **Conta de serviço própria do fetcher, sem nenhum papel IAM.** O servidor de metadados do Google Cloud continua alcançável pela rede do contêiner. O código bloqueia 169.254.169.254 e `metadata.google.internal`, mas se algum dia houver um desvio, o token dessa conta não pode dar acesso a nada.
-5. **Concorrência baixa por instância e limite de instâncias.** A conta de memória está em "Orçamento de memória por instância", abaixo. Começar com:
-   - `--concurrency 2` e memória de 1 GiB;
-   - se `--concurrency` for maior que 2, memória de 2 GiB;
+5. **Concorrência 2 por instância e limite de instâncias.** O próprio fetcher aceita no máximo 2 requisições `/fetch` em andamento (`maxInFlightFetches`) e responde `503` com `Retry-After: 1` acima disso, então a memória não depende do `--concurrency` do Cloud Run. Mesmo assim:
+   - `--concurrency 2` e memória de 1 GiB (conta em "Orçamento de memória por instância", abaixo). Com um `--concurrency` maior, o Cloud Run mandaria requisições para uma instância que responde 503, em vez de abrir outra instância;
    - `--max-instances` baixo, ajustado ao orçamento.
 6. **Sem segredos.** O fetcher não usa chave de API nem Secret Manager. As variáveis de ambiente são só `PORT`, `FETCHER_AUDIENCE` e `API_SERVICE_ACCOUNT_EMAIL`, e nenhuma delas relaxa proteção.
 
@@ -61,6 +60,7 @@ Erros:
 | 422 | Falha ao buscar a página | `{"error":"<categoria>","message":"<texto genérico>"}` |
 | 431 | Cabeçalhos acima de 8 KiB | (Node) |
 | 500 | Erro inesperado | `{"error":"Erro interno"}` |
+| 503 | Instância ocupada: 2 requisições já em andamento, ou fila do worker de extração cheia | `{"error":"Serviço ocupado"}` e `Retry-After: 1` |
 
 Categorias, que também aparecem em `media_error`:
 
@@ -144,7 +144,8 @@ Os testes usam resolvedor e transporte injetados. A única "política de teste" 
 | Nós HTML percorridos | 100 000 | Teto de CPU da varredura, que é iterativa e sem recursão. Atua depois do parse e **não limita o parse em si**: a memória e a CPU do parse5 são limitadas pelo worker. |
 | Extração (worker): prazo | 2,5 s | Inclui subir o worker. Ver "Extração isolada em worker". |
 | Extração (worker): heap | 128 MiB (old) + 32 MiB (young) | Página legítima de 2 MiB usa cerca de 90 MiB de RSS; estourar vira `too_large`. |
-| Extrações simultâneas | 2 | Fila compartilhada pela instância; quem espera desiste pelo prazo da página. |
+| Extrações simultâneas | 2 | Fila compartilhada pela instância, de até 4 (2 × concorrência); acima disso, 503. Quem espera desiste pelo prazo da página. |
+| Requisições `/fetch` em andamento | 2 | Cada uma pode segurar até cerca de 126 MiB; acima disso, 503 rápido, depois da autenticação e antes de ler o corpo. A vaga só volta no fim do streaming. |
 | Redirecionamentos | 5 | Definido na arquitetura. |
 | Cabeçalhos de resposta | 16 KiB | Padrão do Node; cabeçalhos maiores são anormais. |
 | URL | 2048 caracteres | Limite prático de navegadores e CDNs. |
@@ -174,7 +175,7 @@ A revisão de segurança da Fase 3 mostrou que o parse5, por montar a árvore in
 - **Um worker novo por extração**, encerrado com `terminate()` em `finally`: no sucesso, no erro, no prazo e quando quem chamou cancela a requisição. Nenhum estado passa de uma requisição para outra.
 - **Entrada e saída:** o worker recebe só o HTML decodificado, a URL base e três limites numéricos (`maxMediaRefs`, `maxUrlLength` e `maxHtmlNodes`), e devolve dados simples (título, manchete e referências). Roda com `execArgv: []` e `env: {}`. Um teste percorre o grafo de imports do worker, incluindo parse5 e entities, e exige que o único módulo nativo seja `node:worker_threads` (nada de rede, disco ou processo).
 - **Limites:** `resourceLimits` com 128 MiB de old generation e 32 MiB de young. O estouro chega como `ERR_WORKER_OUT_OF_MEMORY` e vira `too_large`; o prazo de 2,5 s (ou o cancelamento) vira `timeout`; qualquer outra falha vira `network`.
-- **Concorrência:** no máximo 2 workers por instância, com fila. O prazo conta a partir da vaga; a espera na fila é limitada pelo prazo da página (30 s).
+- **Concorrência:** no máximo 2 workers por instância, com fila de até 4; fila cheia vira 503. O prazo conta a partir da vaga; a espera na fila é limitada pelo prazo da página (30 s). Com o teto de 2 requisições em andamento, a fila não chega a encher; ela é defesa em profundidade.
 - **Inicialização:** `main.ts` faz uma extração mínima antes de escutar a porta. Se o arquivo do worker não estiver na imagem, o processo sai com erro em vez de falhar em toda requisição. Um teste sobe `node src/main.ts` (o mesmo comando do Dockerfile) e outro confere que o `.dockerignore` não remove nenhum módulo de produção.
 
 **Medições que definiram o prazo** (máquina de desenvolvimento com Windows, Node 24.22.1; página legítima sintética de 2,1 MiB com CSS e script inline e 200 referências, gerada por `legitNewsPage` em `testing.ts`):
@@ -201,14 +202,17 @@ O prazo de 2,5 s dá cerca de 3 vezes o pior caso medido, com margem para uma vC
 | Mídias de cada requisição | até 60 MiB | teto agregado |
 | Serialização de cada requisição | até cerca de 60 MiB, temporário | estimado: para uma mídia de 15 MiB, a string base64 (20 MiB), a linha JSON (20 MiB) e o buffer de escrita (20 MiB) |
 
-Pior caso: 90 + 300 + C × 126 MiB, em que C é o `--concurrency` do Cloud Run. Com C = 2, cerca de 650 MiB, o que cabe em 1 GiB com folga para GC e buffers nativos. Com C = 4, cerca de 900 MiB, o que não cabe com segurança em 1 GiB. **Recomendação: 1 GiB com `--concurrency 2`; 2 GiB se a concorrência for maior que 2.** As parcelas estimadas ainda precisam ser confirmadas no Cloud Run.
+Pior caso: 90 + 300 + R × 126 MiB, em que R é o número de requisições em andamento. O fetcher limita R a 2 (`maxInFlightFetches`), qualquer que seja o `--concurrency` do Cloud Run: cerca de 650 MiB, o que cabe em 1 GiB com folga para GC e buffers nativos. Com R = 4, seriam cerca de 900 MiB, o que não caberia com segurança em 1 GiB. **Recomendação: 1 GiB e `--concurrency 2`.** Para aceitar mais requisições por instância, é preciso subir juntos `maxInFlightFetches` no código e a memória para 2 GiB. As parcelas estimadas ainda precisam ser confirmadas no Cloud Run.
 
 ## Requisitos para a API (quem chama o fetcher)
 
-Achados 5 e 8 da revisão de segurança da Fase 3. O fetcher não muda; a API precisa cumprir isto quando passar a chamá-lo.
+Achados 5 e 8 da primeira revisão de segurança da Fase 3, e o 503 da segunda. A API precisa cumprir isto quando passar a chamar o fetcher.
 
 1. **Uma única mensagem ao usuário para `blocked` e para falha de resolução de nome.** Hoje um nome que existe e resolve para IP privado devolve `blocked`, e um nome inexistente devolve `network`. Se a API repassar essa diferença, o usuário consegue enumerar nomes internos (por exemplo, zonas privadas do Cloud DNS, se um dia houver VPC). A API deve mostrar o mesmo texto genérico para `blocked` e para `network`, tanto no erro da página quanto em `media_error`. A categoria exata pode ir para métricas internas, nunca para a tela nem para a resposta da API.
 2. **Limite de taxa por usuário e por IP**, antes de chamar o fetcher. Uma única chamada a `/fetch` pode gerar até 126 requisições de saída, ou seja, 1 página + 20 mídias, cada uma com até 5 redirecionamentos ((1 + 20) × 6). Ela também pode baixar cerca de 62 MiB (2 MiB de HTML + 60 MiB de mídia) de um alvo escolhido pelo usuário. Sem limite, a plataforma vira amplificador contra terceiros. O limite precisa valer por conta Google (o `sub` do ID token) e por IP de origem, para que várias contas no mesmo IP, ou um IP com várias contas, não escapem. Os valores e onde guardar os contadores ficam para a Fase 4. Contadores com estado exigem decisão, porque a plataforma é stateless.
+3. **Tratar `503` com `Retry-After`.** O fetcher responde `503 {"error":"Serviço ocupado"}` com `Retry-After: 1` quando a instância já tem 2 requisições em andamento ou a fila do worker está cheia. A API deve:
+   - tentar de novo poucas vezes (por exemplo, até 2), com espera curta que respeite o `Retry-After` e um limite total que caiba no prazo da requisição do usuário;
+   - esgotadas as tentativas, mostrar ao usuário uma mensagem clara, por exemplo "O serviço está ocupado. Tente de novo em alguns instantes.", sem repassar status, cabeçalhos ou qualquer detalhe interno do fetcher.
 
 ## Decisões abertas (sem implementação nesta fase)
 

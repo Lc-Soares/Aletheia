@@ -51,3 +51,12 @@ export async function withDeadline<T>(promise: Promise<T>, signal: AbortSignal):
     signal.removeEventListener("abort", onAbort);
   }
 }
+
+// Instância sem vaga (requisições demais ou fila do worker cheia). Não é categoria de FetchError:
+// o serviço responde 503 genérico com Retry-After, e quem chama tenta de novo.
+export class OverloadedError extends Error {
+  constructor() {
+    super("Serviço ocupado");
+    this.name = "OverloadedError";
+  }
+}

@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import { after, before, describe, test } from "node:test";
 
 import type { CallerVerifier } from "./auth.ts";
-import { FetchError } from "./errors.ts";
+import { FetchError, OverloadedError } from "./errors.ts";
 import { createWorkerExtractor } from "./extract-pool.ts";
 import { fetchPage } from "./fetch-page.ts";
 import { isPublicAddress } from "./ip-policy.ts";
@@ -49,9 +49,10 @@ async function start(fetcher: PageFetcher = realFetcher): Promise<Started> {
   };
 }
 
-const post = (base: string, body: unknown, headers: Record<string, string> = {}, path = "/fetch") =>
+const post = (base: string, body: unknown, headers: Record<string, string> = {}, path = "/fetch", signal?: AbortSignal) =>
   fetch(`${base}${path}`, {
     method: "POST",
+    signal,
     headers: { Authorization: `Bearer ${GOOD_TOKEN}`, "Content-Type": "application/json", ...headers },
     body: typeof body === "string" ? body : JSON.stringify(body),
   });
@@ -251,5 +252,90 @@ describe("hash de domínio nos logs (HMAC com chave do processo)", () => {
     assert.match(first, /^[0-9a-f]{16}$/);
     assert.notEqual(first, second);
     assert.notEqual(first, domainHash("https://noticias.example/"));
+  });
+});
+
+describe("serviço do fetcher: teto de requisições em andamento", () => {
+  const MIB = 1024 * 1024;
+  const emptyResult = { finalUrl: "https://noticias.example/", title: null, headline: null, media: [], downloads: [] };
+
+  test("acima do limite, as excedentes recebem 503 rápido e a memória não cresce", { timeout: 30_000 }, async () => {
+    let calls = 0;
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const held: Buffer[] = [];
+    const s = await start(async () => {
+      calls++;
+      held.push(Buffer.alloc(20 * MIB, 1)); // o que cada requisição aceita ocuparia de mídia
+      await gate;
+      return emptyResult;
+    });
+    try {
+      const before = process.memoryUsage().arrayBuffers;
+      const early: number[] = [];
+      const all = Array.from({ length: 20 }, async () => {
+        const res = await post(s.base, { url: "https://noticias.example/" });
+        if (res.status === 503) {
+          assert.equal(res.headers.get("retry-after"), "1");
+          assert.deepEqual(await res.json(), { error: "Serviço ocupado" });
+        } else await res.body?.cancel();
+        early.push(res.status);
+        return res.status;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 1_000)); // as aceitas continuam presas
+      const growth = process.memoryUsage().arrayBuffers - before;
+      const statusesBeforeRelease = [...early];
+      release();
+      const statuses = await Promise.all(all);
+      assert.deepEqual(statusesBeforeRelease, Array(18).fill(503));
+      assert.equal(calls, 2);
+      assert.ok(growth < 100 * MIB, `cresceu ${Math.round(growth / MIB)} MiB`);
+      assert.equal(statuses.filter((status) => status === 200).length, 2);
+      assert.equal(s.logs.filter((entry) => entry.outcome === "busy").length, 18);
+      // As vagas voltam depois que as aceitas terminam.
+      const again = await post(s.base, { url: "https://noticias.example/" });
+      await again.body?.cancel();
+      assert.equal(again.status, 200);
+    } finally {
+      held.length = 0;
+      await s.close();
+    }
+  });
+
+  test("vaga é liberada quando quem chamou desiste no meio", { timeout: 10_000 }, async () => {
+    let calls = 0;
+    const s = await start((_url, signal) => {
+      calls++;
+      return new Promise((_, reject) => signal.addEventListener("abort", () => reject(new FetchError("timeout"))));
+    });
+    try {
+      for (let i = 0; i < 3; i++) {
+        const controller = new AbortController();
+        const pending = post(s.base, { url: "https://noticias.example/" }, {}, "/fetch", controller.signal).catch(() => null);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        controller.abort();
+        await pending;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(calls, 3); // nenhuma das três ficou presa ocupando vaga
+    } finally {
+      await s.close();
+    }
+  });
+
+  test("fila do worker cheia (OverloadedError) vira 503 genérico", async () => {
+    const s = await start(async () => {
+      throw new OverloadedError();
+    });
+    try {
+      const res = await post(s.base, { url: "https://noticias.example/" });
+      assert.equal(res.status, 503);
+      assert.equal(res.headers.get("retry-after"), "1");
+      assert.deepEqual(await res.json(), { error: "Serviço ocupado" });
+    } finally {
+      await s.close();
+    }
   });
 });

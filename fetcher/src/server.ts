@@ -3,8 +3,9 @@ import { once } from "node:events";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 import { type CallerVerifier, extractBearerToken } from "./auth.ts";
-import { FetchError } from "./errors.ts";
+import { FetchError, OverloadedError } from "./errors.ts";
 import type { MediaDownload, PageResult } from "./fetch-page.ts";
+import { DEFAULT_LIMITS } from "./limits.ts";
 
 // Só campos sem dado do usuário: no máximo um hash truncado do domínio, nunca URL ou caminho.
 export type LogEntry = {
@@ -18,6 +19,8 @@ export type LogEntry = {
 
 export type PageFetcher = (url: string, signal: AbortSignal) => Promise<PageResult>;
 export type FetcherServerOptions = { verifier: CallerVerifier; fetchPage: PageFetcher; log: (entry: LogEntry) => void };
+
+type InFlight = { count: number; readonly max: number };
 
 const ROUTES = new Map([
   ["/healthz", "GET"],
@@ -110,13 +113,14 @@ async function streamResult(res: ServerResponse, result: PageResult, signal: Abo
   res.end();
 }
 
-async function handleFetch(
+const busy = (): HttpError => new HttpError(503, "busy", "Serviço ocupado");
+
+async function fetchAndStream(
   req: IncomingMessage,
   res: ServerResponse,
   options: FetcherServerOptions,
   note: (fields: Partial<LogEntry>) => void,
 ): Promise<void> {
-  await authenticate(req, options.verifier);
   const url = await readJsonUrl(req);
   note({ domainHash: domainHash(url) });
 
@@ -127,9 +131,29 @@ async function handleFetch(
     note({ outcome: "ok" });
     await streamResult(res, result, controller.signal);
   } catch (error) {
+    if (error instanceof OverloadedError) throw busy();
     if (!(error instanceof FetchError)) throw error;
     note({ outcome: error.category });
     sendJson(res, 422, { error: error.category, message: error.message });
+  }
+}
+
+// Teto de requisições em andamento por instância: cada uma pode segurar dezenas de MiB de mídia,
+// e a segurança não pode depender do --concurrency do Cloud Run. A vaga só volta no fim do streaming.
+async function handleFetch(
+  req: IncomingMessage,
+  res: ServerResponse,
+  options: FetcherServerOptions,
+  inFlight: InFlight,
+  note: (fields: Partial<LogEntry>) => void,
+): Promise<void> {
+  await authenticate(req, options.verifier);
+  if (inFlight.count >= inFlight.max) throw busy();
+  inFlight.count++;
+  try {
+    await fetchAndStream(req, res, options, note);
+  } finally {
+    inFlight.count--;
   }
 }
 
@@ -137,6 +161,7 @@ async function route(
   req: IncomingMessage,
   res: ServerResponse,
   options: FetcherServerOptions,
+  inFlight: InFlight,
   path: string,
   note: (fields: Partial<LogEntry>) => void,
 ): Promise<void> {
@@ -145,17 +170,19 @@ async function route(
   if (req.method !== method) return sendJson(res, 405, { error: "Método não permitido" }, { Allow: method });
   if (path === "/healthz") return sendJson(res, 200, { status: "ok" });
   try {
-    await handleFetch(req, res, options, note);
+    await handleFetch(req, res, options, inFlight, note);
   } catch (error) {
     if (!(error instanceof HttpError)) throw error;
     note({ outcome: error.outcome });
     const extra: Record<string, string> = error.status === 401 ? { "WWW-Authenticate": "Bearer" } : {};
     if (error.status === 413) extra["Connection"] = "close";
+    if (error.status === 503) extra["Retry-After"] = "1";
     sendJson(res, error.status, { error: error.message }, extra);
   }
 }
 
 export function createFetcherServer(options: FetcherServerOptions): Server {
+  const inFlight: InFlight = { count: 0, max: DEFAULT_LIMITS.maxInFlightFetches };
   const server = createServer({ maxHeaderSize: 8 * 1024 }, (req, res) => {
     const started = performance.now();
     const path = (req.url ?? "").split("?")[0] ?? "";
@@ -173,7 +200,7 @@ export function createFetcherServer(options: FetcherServerOptions): Server {
         outcome: entry.outcome ?? "-",
       });
     });
-    route(req, res, options, path, note).catch(() => {
+    route(req, res, options, inFlight, path, note).catch(() => {
       if (!res.headersSent) sendJson(res, 500, { error: "Erro interno" });
       else res.destroy();
     });
