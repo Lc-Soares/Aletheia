@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import fs, { readdirSync, readFileSync } from "node:fs";
 import { posix } from "node:path";
 import { describe, test } from "node:test";
@@ -225,13 +226,18 @@ describe("try-fetch: termina sozinho", () => {
       const env: Record<string, string | undefined> = { ...process.env };
       delete env["NODE_TEST_CONTEXT"];
       delete env["NODE_OPTIONS"];
+      // spawn assíncrono: o DNS falso roda neste processo e precisa do event loop livre.
       const started = performance.now();
-      const child = await new Promise<{ status: number | null; stdout: string }>((resolve) => {
-        const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], { env, encoding: "utf8", timeout: 15_000 });
-        resolve({ status: result.status, stdout: result.stdout });
-      });
-      assert.equal(child.status, 0, `não saiu sozinho a tempo: ${child.stdout}`);
-      assert.match(child.stdout, /Resumo: 2 de 2/);
+      const child = spawn(process.execPath, ["--input-type=module", "-e", script], { env, stdio: ["ignore", "pipe", "pipe"] });
+      let stdout = "";
+      child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+      child.stderr.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+      const killer = setTimeout(() => child.kill(), 15_000); // se segurar handle, é morto e o teste falha
+      const [status, signal] = (await once(child, "exit")) as [number | null, NodeJS.Signals | null];
+      clearTimeout(killer);
+      assert.equal(signal, null, `não saiu sozinho a tempo: ${stdout}`);
+      assert.equal(status, 0, stdout);
+      assert.match(stdout, /Resumo: 2 de 2/);
       assert.ok(performance.now() - started < 15_000);
     } finally {
       await dns.close();
