@@ -48,6 +48,7 @@ child.on("close", (code, signal) => {
   }
   const result = verdict(specSummary(Buffer.concat(stdoutChunks).toString("utf8")), count);
   if (result.ok) return;
+  if (result.unknownFormat) console.error("Formato de eventos do node:test não reconhecido: evento de teste sem data.file");
   for (const file of result.emptyFiles) console.error(`Arquivo de teste sem nenhum teste: ${relative(process.cwd(), file)}`);
   const where = result.emptyFiles.length > 0 ? ` em ${result.emptyFiles.length} arquivo(s)` : "";
   console.error(`Nenhum teste executado${where}: ${globs.join(" ")}`);

@@ -21,10 +21,14 @@ export function specSummary(output) {
 }
 
 // count: o objeto da linha do count-reporter, ou null se ela não chegou.
+// unknownFormat: algum evento de teste veio sem data.file (ou a contagem não diz quantos).
 export function verdict(summary, count) {
+  const fail = (extra = {}) => ({ ok: false, emptyFiles: [], unknownFormat: false, ...extra });
   const { tests, pass } = summary;
-  if (tests === null || pass === null || tests === 0 || pass < 1) return { ok: false, emptyFiles: [] };
-  if (count === null || count.real === 0 || count.passed < 1) return { ok: false, emptyFiles: [] };
-  if (count.emptyFiles.length > 0) return { ok: false, emptyFiles: count.emptyFiles };
-  return { ok: true, emptyFiles: [] };
+  if (tests === null || pass === null || tests === 0 || pass < 1) return fail();
+  if (count === null) return fail();
+  if (count.withoutFile !== 0) return fail({ unknownFormat: true });
+  if (count.real === 0 || count.passed < 1) return fail();
+  if (count.emptyFiles.length > 0) return fail({ emptyFiles: count.emptyFiles });
+  return { ok: true, emptyFiles: [], unknownFormat: false };
 }

@@ -118,7 +118,7 @@ describe("runner de testes: reprova quando nenhum teste passou", () => {
 });
 
 // count-reporter e decisão do runner. Importados por URL (são .js de test-support, fora do tsconfig).
-type Count = { real: number; passed: number; emptyFiles: string[] };
+type Count = { real: number; passed: number; emptyFiles: string[]; withoutFile?: number };
 type Summary = { tests: number | null; pass: number | null };
 const COUNTER_URL = new URL("../../test-support/count-reporter.js", import.meta.url).href;
 const VERDICT_URL = new URL("../../test-support/verdict.js", import.meta.url).href;
@@ -128,7 +128,7 @@ const counter = (await import(COUNTER_URL)) as {
 };
 const decision = (await import(VERDICT_URL)) as {
   specSummary: (output: string) => Summary;
-  verdict: (summary: Summary, count: Count | null) => { ok: boolean; emptyFiles: string[] };
+  verdict: (summary: Summary, count: Count | null) => { ok: boolean; emptyFiles: string[]; unknownFormat: boolean };
 };
 
 async function countOf(events: unknown[]): Promise<Count> {
@@ -146,7 +146,7 @@ const GOOD_SUMMARY: Summary = { tests: 1, pass: 1 };
 describe("count-reporter e decisão do runner: falha fechada", () => {
   test("nenhum evento de teste de arquivo nenhum: contagem zerada e o runner reprova", async () => {
     const count = await countOf([]);
-    assert.deepEqual(count, { real: 0, passed: 0, emptyFiles: [] });
+    assert.deepEqual(count, { real: 0, passed: 0, emptyFiles: [], withoutFile: 0 });
     assert.equal(decision.verdict(GOOD_SUMMARY, count).ok, false, "mesmo com o resumo do spec dizendo que passou");
   });
 
@@ -155,12 +155,35 @@ describe("count-reporter e decisão do runner: falha fechada", () => {
     assert.equal(decision.verdict(GOOD_SUMMARY, count).ok, false);
   });
 
+  test("evento de teste sintético sem data.file: formato desconhecido e o runner reprova", async () => {
+    const withFile = { type: "test:pass", data: { name: "passa", file: fixture("passing.test.js"), details: { type: "test" } } };
+    const withoutFile = { type: "test:pass", data: { name: "sem arquivo", details: { type: "test" } } };
+    const count = await countOf([withFile, withoutFile]);
+    assert.deepEqual(count, { real: 1, passed: 1, emptyFiles: [], withoutFile: 1 });
+    const result = decision.verdict(GOOD_SUMMARY, count);
+    assert.equal(result.ok, false, "mesmo com um teste real que passou");
+    assert.equal(result.unknownFormat, true);
+  });
+
+  test("falha sem data.file e data.file vazio também contam como formato desconhecido", async () => {
+    const count = await countOf([
+      { type: "test:fail", data: { name: "falhou", details: { type: "test" } } },
+      { type: "test:pass", data: { name: "vazio", file: "", details: { type: "test" } } },
+    ]);
+    assert.equal(count.withoutFile, 2);
+    assert.equal(decision.verdict(GOOD_SUMMARY, count).unknownFormat, true);
+  });
+
+  test("contagem sem o campo withoutFile: o runner reprova (falha fechada)", () => {
+    assert.equal(decision.verdict(GOOD_SUMMARY, { real: 1, passed: 1, emptyFiles: [] }).ok, false);
+  });
+
   test("linha de contagem ausente: o runner reprova", () => {
     assert.equal(decision.verdict(GOOD_SUMMARY, null).ok, false);
   });
 
   test("resumo do spec ausente ou zerado: o runner reprova", () => {
-    const count: Count = { real: 1, passed: 1, emptyFiles: [] };
+    const count: Count = { real: 1, passed: 1, emptyFiles: [], withoutFile: 0 };
     assert.equal(decision.verdict({ tests: null, pass: null }, count).ok, false);
     assert.equal(decision.verdict({ tests: 0, pass: 0 }, count).ok, false);
     assert.equal(decision.verdict(GOOD_SUMMARY, count).ok, true);
@@ -187,11 +210,11 @@ const fixture = (name: string): string => join(FIXTURES, name);
 
 describe("count-reporter contra o node:test real (fixtures)", () => {
   test(`Node ${process.version}: um teste que passa`, () => {
-    assert.deepEqual(realCount(["passing.test.js"]), { real: 1, passed: 1, emptyFiles: [] });
+    assert.deepEqual(realCount(["passing.test.js"]), { real: 1, passed: 1, emptyFiles: [], withoutFile: 0 });
   });
 
   test("arquivo sem testes: o invólucro do arquivo não conta como teste", () => {
-    assert.deepEqual(realCount(["no-tests.test.js"]), { real: 0, passed: 0, emptyFiles: [fixture("no-tests.test.js")] });
+    assert.deepEqual(realCount(["no-tests.test.js"]), { real: 0, passed: 0, emptyFiles: [fixture("no-tests.test.js")], withoutFile: 0 });
   });
 
   test("arquivo vazio junto com outro: só o vazio é apontado", () => {
@@ -199,14 +222,15 @@ describe("count-reporter contra o node:test real (fixtures)", () => {
       real: 1,
       passed: 1,
       emptyFiles: [fixture("no-tests.test.js")],
+      withoutFile: 0,
     });
   });
 
   test("todos pulados: contam como testes, mas nenhum passou", () => {
-    assert.deepEqual(realCount(["all-skipped.test.js"]), { real: 2, passed: 0, emptyFiles: [] });
+    assert.deepEqual(realCount(["all-skipped.test.js"]), { real: 2, passed: 0, emptyFiles: [], withoutFile: 0 });
   });
 
   test("teste que falha: conta como teste, sem passar", () => {
-    assert.deepEqual(realCount(["failing.test.js"]), { real: 1, passed: 0, emptyFiles: [] });
+    assert.deepEqual(realCount(["failing.test.js"]), { real: 1, passed: 0, emptyFiles: [], withoutFile: 0 });
   });
 });

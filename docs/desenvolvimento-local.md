@@ -17,7 +17,17 @@ O `npm run test` de cada workspace passa por `test-support/run-tests.js`, que ro
 - `test:pass`/`test:fail` com `data.name`, `data.file`, `data.details.type`, `skip` e `todo`;
 - um evento com o nome do próprio arquivo quando o arquivo não tem nenhum teste.
 
-**Risco:** uma versão futura do Node pode mudar esse formato. O runner foi feito para falhar fechado: sem eventos de teste, sem a linha de contagem ou sem o resumo do spec, ele reprova em vez de aprovar. Mas um formato novo pode fazer o invólucro do arquivo deixar de ser reconhecido, e então um arquivo sem testes voltaria a passar despercebido. Ao trocar a versão do Node, rode `npm run check`; os testes de `fetcher/src/test-guard.test.ts` usam o `node:test` de verdade e acusam a mudança.
+**Risco:** uma versão futura do Node pode mudar esse formato. O runner foi feito para falhar fechado.
+
+O que já reprova em vez de aprovar:
+- nenhum evento de teste, linha de contagem ausente ou resumo do spec ausente ou zerado;
+- **qualquer evento de teste sem `data.file`** (ou com `data.file` vazio). Ele aparece como "Formato de eventos do node:test não reconhecido". Sem o arquivo não dá para reconhecer o invólucro, então o runner não conta às cegas.
+
+O que ainda não cobre:
+- se o Node continuar mandando `data.file` mas mudar o **nome** do evento do arquivo vazio (hoje é o caminho do arquivo relativo ao diretório atual), o invólucro deixa de ser reconhecido e conta como um teste que passou. Um arquivo sem testes voltaria a passar despercebido;
+- se o Node mudar o significado de `skip`/`todo` ou de `details.type`, as contagens de "passou" e de suítes podem ficar erradas sem que o formato pareça desconhecido.
+
+Ao trocar a versão do Node, rode `npm run check`. Os testes de `fetcher/src/test-guard.test.ts` usam o `node:test` de verdade com as fixtures, com as contagens exatas, e acusam essas mudanças.
 
 ## Fetcher
 

@@ -10,17 +10,24 @@ export default async function* countReporter(source) {
   const testsPerFile = new Map();
   let real = 0;
   let passed = 0;
+  // Evento de teste sem data.file: formato que este reporter não conhece. Sem o arquivo não dá para
+  // reconhecer o invólucro, então o runner reprova em vez de contar às cegas.
+  let withoutFile = 0;
   for await (const event of source) {
     if (event.type !== "test:pass" && event.type !== "test:fail") continue;
-    const { name, file, details, skip, todo } = event.data;
+    const { name, file, details, skip, todo } = event.data ?? {};
     if (details?.type === "suite") continue;
-    if (file !== undefined && !testsPerFile.has(file)) testsPerFile.set(file, 0);
+    if (typeof file !== "string" || file === "") {
+      withoutFile++;
+      continue;
+    }
+    if (!testsPerFile.has(file)) testsPerFile.set(file, 0);
     // Invólucro: o nome, resolvido a partir do diretório atual, é o próprio arquivo do evento.
-    if (file !== undefined && resolve(name) === resolve(file)) continue;
+    if (typeof name === "string" && resolve(name) === resolve(file)) continue;
     real++;
-    if (file !== undefined) testsPerFile.set(file, (testsPerFile.get(file) ?? 0) + 1);
+    testsPerFile.set(file, (testsPerFile.get(file) ?? 0) + 1);
     if (event.type === "test:pass" && !skip && !todo) passed++;
   }
   const emptyFiles = [...testsPerFile].filter(([, count]) => count === 0).map(([file]) => file);
-  yield `${COUNT_PREFIX}${JSON.stringify({ real, passed, emptyFiles })}\n`;
+  yield `${COUNT_PREFIX}${JSON.stringify({ real, passed, emptyFiles, withoutFile })}\n`;
 }
