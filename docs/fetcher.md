@@ -77,6 +77,8 @@ Categorias, que também aparecem em `media_error`:
 
 As mensagens nunca contêm IP, URL, hostname ou texto do sistema operacional.
 
+Logs: uma linha JSON por requisição, com método, rota normalizada, status, duração, resultado e `domainHash`. O `domainHash` é um HMAC-SHA-256 truncado do hostname com chave aleatória gerada na inicialização do processo e nunca gravada. Ele correlaciona requisições só dentro da mesma instância e não se reverte por dicionário (um SHA-256 sem chave dos domínios populares se reverteria).
+
 ## Proteção contra SSRF
 
 Toda URL, seja a do usuário, um redirecionamento ou uma mídia extraída do HTML, passa pelo mesmo caminho (`safeFetch`):

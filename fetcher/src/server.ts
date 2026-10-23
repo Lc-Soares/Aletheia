@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
@@ -37,11 +37,15 @@ class HttpError extends Error {
   }
 }
 
+// Chave aleatória gerada na inicialização e nunca gravada: sem ela, o hash dos domínios populares
+// se reverte por dicionário. A correlação vale só dentro da mesma instância.
+const LOG_HASH_KEY = randomBytes(32);
+
 export function domainHash(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   try {
     const { hostname } = new URL(raw);
-    return hostname === "" ? null : createHash("sha256").update(hostname).digest("hex").slice(0, 16);
+    return hostname === "" ? null : createHmac("sha256", LOG_HASH_KEY).update(hostname).digest("hex").slice(0, 16);
   } catch {
     return null;
   }

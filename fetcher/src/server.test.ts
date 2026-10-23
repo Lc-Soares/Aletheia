@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { request } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -227,5 +228,28 @@ describe("serviço do fetcher: casos de erro e cancelamento", () => {
     } finally {
       await s.close();
     }
+  });
+});
+
+describe("hash de domínio nos logs (HMAC com chave do processo)", () => {
+  test("não bate com o SHA-256 sem chave, que se reverte por dicionário", () => {
+    const unkeyed = createHash("sha256").update("noticias.example").digest("hex").slice(0, 16);
+    assert.notEqual(domainHash("https://noticias.example/"), unkeyed);
+  });
+
+  test("estável dentro do processo; depende só do hostname", () => {
+    assert.equal(domainHash("https://noticias.example/a"), domainHash("http://noticias.example/b?x=1"));
+    assert.notEqual(domainHash("https://noticias.example/"), domainHash("https://outro.example/"));
+  });
+
+  test("cada processo gera a própria chave", () => {
+    const script = `import { domainHash } from ${JSON.stringify(new URL("./server.ts", import.meta.url).href)};
+      console.log(domainHash("https://noticias.example/"));`;
+    const run = () =>
+      execFileSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8" }).trim();
+    const [first, second] = [run(), run()];
+    assert.match(first, /^[0-9a-f]{16}$/);
+    assert.notEqual(first, second);
+    assert.notEqual(first, domainHash("https://noticias.example/"));
   });
 });
