@@ -1,7 +1,7 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
-import { FetchError, toFetchError } from "./errors.ts";
+import { FetchError, toFetchError, withDeadline } from "./errors.ts";
 import { type AddressPolicy, canonicalAddress } from "./ip-policy.ts";
 import type { TargetUrl } from "./url-policy.ts";
 
@@ -12,16 +12,6 @@ export const systemResolver: Resolver = async (hostname) => {
   const results = await lookup(hostname, { all: true, order: "verbatim" });
   return results.map(({ address, family }) => ({ address, family: family === 6 ? 6 : 4 }));
 };
-
-function rejectOnAbort(signal: AbortSignal): { promise: Promise<never>; dispose: () => void } {
-  let onAbort = (): void => {};
-  const promise = new Promise<never>((_, reject) => {
-    onAbort = () => reject(new FetchError("timeout"));
-    if (signal.aborted) onAbort();
-    else signal.addEventListener("abort", onAbort, { once: true });
-  });
-  return { promise, dispose: () => signal.removeEventListener("abort", onAbort) };
-}
 
 function allowedAddress(address: string, policy: AddressPolicy): ResolvedAddress {
   const canonical = canonicalAddress(address);
@@ -39,14 +29,11 @@ export async function resolveTarget(
 ): Promise<ResolvedAddress> {
   if (target.ipVersion !== 0) return allowedAddress(target.hostname, policy);
 
-  const abort = rejectOnAbort(signal);
   let results: readonly ResolvedAddress[];
   try {
-    results = await Promise.race([resolver(target.hostname), abort.promise]);
+    results = await withDeadline(resolver(target.hostname), signal);
   } catch (error) {
     throw toFetchError(error, signal);
-  } finally {
-    abort.dispose();
   }
   if (results.length === 0) throw new FetchError("network");
   const allowed = results.map(({ address }) => allowedAddress(address, policy));

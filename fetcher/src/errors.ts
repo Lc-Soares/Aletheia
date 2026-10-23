@@ -36,3 +36,18 @@ export function toFetchError(error: unknown, signal?: AbortSignal): FetchError {
   if (signal?.aborted) return new FetchError("timeout");
   return new FetchError("network");
 }
+
+// Rejeita com "timeout" quando o sinal abortar, mesmo que a promessa original ignore o sinal.
+export async function withDeadline<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  let onAbort = (): void => {};
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(new FetchError("timeout"));
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
