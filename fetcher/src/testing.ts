@@ -99,7 +99,7 @@ export function inlineExtractor(limits: ExtractLimits = DEFAULT_LIMITS): Extract
 // Worker de extração falso (URL data:) que responde uma página vazia depois de `delayMs`.
 export function slowWorker(delayMs: number): URL {
   const code = `import { parentPort } from "node:worker_threads";
-    setTimeout(() => parentPort.postMessage({ title: null, headline: null, media: [] }), ${delayMs});`;
+    setTimeout(() => parentPort.postMessage({ title: null, headline: null, media: [], possiblyNeedsJavaScript: false }), ${delayMs});`;
   return new URL(`data:text/javascript,${encodeURIComponent(code)}`);
 }
 

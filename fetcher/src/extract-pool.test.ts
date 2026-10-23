@@ -33,6 +33,12 @@ describe("extrator em worker", () => {
     assert.equal(page.media.length, 3);
   });
 
+  test("repassa maxSelectedMedia ao worker", async () => {
+    const tags = Array.from({ length: 10 }, (_, i) => `<img src="/i${i}.jpg">`).join("");
+    const page = await createWorkerExtractor(resolveLimits({ maxSelectedMedia: 2 }))(tags, PAGE, never());
+    assert.equal(page.media.filter((m) => m.selected).length, 2);
+  });
+
   test("página legítima de 2 MiB cabe com folga no prazo de produção", { timeout: 30_000 }, async (t) => {
     const htmlText = legitNewsPage(2 * 1024 * 1024);
     const extract = createWorkerExtractor(resolveLimits());
@@ -126,19 +132,27 @@ describe("mensagem do worker é validada no processo principal", () => {
   const run = (message: string) => createWorkerExtractor(resolveLimits(), fakeWorker(message))("<p></p>", PAGE, never());
 
   test("mensagem bem formada passa", async () => {
-    const page = { title: "T", headline: null, media: [{ url: "https://cdn.example/a.jpg", kind: "image", source: "img" }] };
+    const page = {
+      title: "T",
+      headline: null,
+      media: [{ url: "https://cdn.example/a.jpg", kind: "image", source: "img", group: 1, score: 0, selected: true, skipReason: null }],
+      possiblyNeedsJavaScript: false,
+    };
     assert.deepEqual(await run(JSON.stringify(page)), page);
   });
 
+  // Cada mensagem é bem formada exceto pelo defeito do nome (com os campos da seleção).
+  const item = (url: string, source = "img") =>
+    `{ url: ${JSON.stringify(url)}, kind: "image", source: ${JSON.stringify(source)}, group: 1, score: 0, selected: false, skipReason: "limit" }`;
+  const many = (count: number, selected: boolean) =>
+    `Array.from({ length: ${count} }, (_, i) => ({ url: "https://x.example/" + i, kind: "image", source: "img", group: i + 1, score: 0, selected: ${selected}, skipReason: ${selected ? "null" : '"limit"'} }))`;
   const malformed: [string, string][] = [
     ["sem mensagem útil (undefined)", "undefined"],
-    ["título acima de 300 caracteres", `{ title: "a".repeat(301), headline: null, media: [] }`],
-    ["esquema perigoso na mídia", `{ title: null, headline: null, media: [{ url: "file:///etc/passwd", kind: "image", source: "img" }] }`],
-    [
-      "mídias demais",
-      `{ title: null, headline: null, media: Array.from({ length: 201 }, (_, i) => ({ url: "https://x.example/" + i, kind: "image", source: "img" })) }`,
-    ],
-    ["source desconhecido", `{ title: null, headline: null, media: [{ url: "https://x.example/a", kind: "image", source: "iframe" }] }`],
+    ["título acima de 300 caracteres", `{ title: "a".repeat(301), headline: null, media: [], possiblyNeedsJavaScript: false }`],
+    ["esquema perigoso na mídia", `{ title: null, headline: null, media: [${item("file:///etc/passwd")}], possiblyNeedsJavaScript: false }`],
+    ["mídias demais", `{ title: null, headline: null, media: ${many(201, false)}, possiblyNeedsJavaScript: false }`],
+    ["source desconhecido", `{ title: null, headline: null, media: [${item("https://x.example/a", "iframe")}], possiblyNeedsJavaScript: false }`],
+    ["selecionadas acima de maxSelectedMedia", `{ title: null, headline: null, media: ${many(9, true)}, possiblyNeedsJavaScript: false }`],
   ];
   for (const [name, message] of malformed) {
     test(`${name}: FetchError network e worker encerrado`, async () => {
