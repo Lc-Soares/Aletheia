@@ -87,6 +87,24 @@ describe("fetchPage", () => {
     assert.ok(contacted.every((host) => host === "noticias.example" || host === "cdn.example"));
   });
 
+  test("userinfo e porta não padrão: listadas na forma normalizada e bloqueadas sem conexão", async () => {
+    const transport = routeTransport({
+      "https://noticias.example/": html(
+        `<img src="http://u:p@10.0.0.1:22/x"><img src="http://u:p@cdn.example/a.jpg"><img src="http://cdn.example:22/b.jpg">`,
+      ),
+    });
+    const result = await fetchPage("https://noticias.example/", deps(transport));
+    assert.deepEqual(
+      result.media.map((m) => m.url),
+      ["http://u:p@10.0.0.1:22/x", "http://u:p@cdn.example/a.jpg", "http://cdn.example:22/b.jpg"],
+    );
+    assert.deepEqual(
+      result.downloads.map((d) => (d.ok ? "ok" : d.error)),
+      ["blocked", "blocked", "blocked"],
+    );
+    assert.deepEqual(transport.calls.map((c) => c.url.href), ["https://noticias.example/"]);
+  });
+
   test("mais de 20 mídias: lista todas, baixa só 20", async () => {
     const routes: Record<string, FakeResponse> = {
       "https://noticias.example/": html(Array.from({ length: 25 }, (_, i) => `<img src="/m${i}.jpg">`).join("")),

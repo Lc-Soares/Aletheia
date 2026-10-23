@@ -21,13 +21,15 @@ function hasExactKeys(value: PlainObject, keys: readonly string[]): boolean {
 }
 
 const isText = (value: unknown): value is string | null =>
-  value === null || (typeof value === "string" && value.length <= MAX_TEXT_LENGTH);
+  value === null || (typeof value === "string" && value.length <= MAX_TEXT_LENGTH && value.isWellFormed());
 
 function isHttpUrl(value: unknown, maxLength: number): value is string {
   if (typeof value !== "string" || value.length > maxLength) return false;
   try {
-    const { protocol } = new URL(value);
-    return protocol === "http:" || protocol === "https:";
+    // Forma normalizada: o worker legítimo sempre envia url.href, então qualquer diferença
+    // (espaços, controles, maiúsculas, porta padrão explícita) é recusada, não corrigida.
+    const { protocol, href } = new URL(value);
+    return href === value && (protocol === "http:" || protocol === "https:");
   } catch {
     return false;
   }

@@ -49,8 +49,10 @@ function isHtmlElement(node: Node): node is Element {
   return "tagName" in node && node.namespaceURI === parse5Html.NS.HTML;
 }
 
+// O corte conta unidades UTF-16 e pode partir um par surrogate; toWellFormed troca a metade solta
+// por U+FFFD (o validador do processo principal recusa texto mal formado).
 function normalizeText(text: string): string | null {
-  const normalized = text.replace(/\s+/g, " ").trim().slice(0, MAX_TEXT_LENGTH);
+  const normalized = text.replace(/\s+/g, " ").trim().slice(0, MAX_TEXT_LENGTH).toWellFormed();
   return normalized === "" ? null : normalized;
 }
 

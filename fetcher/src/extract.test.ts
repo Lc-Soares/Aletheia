@@ -7,6 +7,19 @@ const PAGE = "https://noticias.example/politica/materia.html";
 const urls = (htmlText: string, page = PAGE) => extractPage(htmlText, page).media.map((m) => m.url);
 
 describe("extractPage: título e manchete", () => {
+  test("corte em 300 que parte um par surrogate não deixa surrogate solto", () => {
+    const emoji = "😀"; // 2 unidades UTF-16: o corte em 300 cai no meio
+    const longText = `${"a".repeat(299)}${emoji}${"b".repeat(10)}`;
+    const page = extractPage(`<title>${longText}</title><meta property="og:title" content="${longText}">`, PAGE);
+    const h1 = extractPage(`<h1>${longText}</h1>`, PAGE).headline;
+    for (const text of [page.title, page.headline, h1]) {
+      assert.ok(text !== null);
+      assert.ok(text.isWellFormed(), "sem surrogate solto");
+      assert.equal(text.length, 300);
+      assert.ok(text.endsWith("�"));
+    }
+  });
+
   test("título do <title>, manchete do og:title", () => {
     const page = extractPage(
       `<html><head><title>  Título   da

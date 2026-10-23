@@ -54,7 +54,23 @@ describe("validateWorkerPage", () => {
     ["url inválida", page({ media: [ref({ url: "http://[::1" })] })],
     ["kind desconhecido", page({ media: [ref({ kind: "audio" })] })],
     ["source desconhecido", page({ media: [ref({ source: "iframe" })] })],
+    // Forma normalizada (terceira revisão, achado 2): o worker legítimo sempre envia url.href.
+    ["url com espaços, quebra de linha, <script> e tab", page({ media: [ref({ url: " https://a.example/x\n<script>.jpg\t" })] })],
+    ["url com esquema e host em maiúsculas e porta padrão", page({ media: [ref({ url: "HTTP://A.example:443/x" })] })],
+    ["url com espaço no caminho", page({ media: [ref({ url: "https://a.example/a b.jpg" })] })],
+    ["title com surrogate alto solto", page({ title: `${"a".repeat(10)}\uD83D` })],
+    ["headline com surrogate baixo solto", page({ headline: "\uDE00manchete" })],
   ];
+
+  test("userinfo e porta não padrão na forma normalizada passam (o download as bloqueia)", () => {
+    const url = "http://u:p@10.0.0.1:22/x";
+    assert.equal(new URL(url).href, url);
+    assert.equal(validateWorkerPage(page({ media: [ref({ url })] }), LIMITS).media[0]?.url, url);
+  });
+
+  test("texto com par surrogate completo passa", () => {
+    assert.equal(validateWorkerPage(page({ title: "notícia 😀" }), LIMITS).title, "notícia 😀");
+  });
   for (const [name, message] of malformed) {
     test(`${name}: FetchError network`, () => assertNetwork(message));
   }
