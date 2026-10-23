@@ -9,6 +9,16 @@ Roda web e API juntos, na mesma origem, sem `firebase-tools`.
 
 O proxy (`web/dev-proxy.mjs`) serve `web/public`, encaminha `/api/**` para a API (porta `API_PORT`, padrão 8080) e aplica os cabeçalhos do `firebase.json`, inclusive a CSP. Escuta só em 127.0.0.1. A porta do proxy muda com `DEV_PORT`.
 
+## Testes
+
+O `npm run test` de cada workspace passa por `test-support/run-tests.js`, que roda o `node --test` com o guarda de unhandled rejection e **reprova quando nenhum teste passou de verdade**: glob vazio, total 0, todos pulados, ou um arquivo `*.test.*` sem nenhum `test()`. Sem isso, o `node --test` sai com 0 nesses casos. A contagem vem de `test-support/count-reporter.js`, e a decisão, de `test-support/verdict.js`. As fixtures de `test-support/fixtures/` só rodam pelos testes do próprio runner (`fetcher/src/test-guard.test.ts`).
+
+**Versão mínima do Node: 24** (`engines` do `package.json`; o CI usa `node-version: 24`). O runner foi validado no Node 24.22.1 local; no CI e no Codespace, ele é validado pelos mesmos testes. O `count-reporter` depende do formato dos eventos do `node:test`:
+- `test:pass`/`test:fail` com `data.name`, `data.file`, `data.details.type`, `skip` e `todo`;
+- um evento com o nome do próprio arquivo quando o arquivo não tem nenhum teste.
+
+**Risco:** uma versão futura do Node pode mudar esse formato. O runner foi feito para falhar fechado: sem eventos de teste, sem a linha de contagem ou sem o resumo do spec, ele reprova em vez de aprovar. Mas um formato novo pode fazer o invólucro do arquivo deixar de ser reconhecido, e então um arquivo sem testes voltaria a passar despercebido. Ao trocar a versão do Node, rode `npm run check`; os testes de `fetcher/src/test-guard.test.ts` usam o `node:test` de verdade e acusam a mudança.
+
 ## Fetcher
 
 O fetcher ainda não é chamado pela API (isso entra na Fase 4). Para subir só ele:
