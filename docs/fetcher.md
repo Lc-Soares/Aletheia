@@ -203,6 +203,13 @@ O prazo de 2,5 s dá cerca de 3 vezes o pior caso medido, com margem para uma vC
 
 Pior caso: 90 + 300 + C × 126 MiB, em que C é o `--concurrency` do Cloud Run. Com C = 2, cerca de 650 MiB, o que cabe em 1 GiB com folga para GC e buffers nativos. Com C = 4, cerca de 900 MiB, o que não cabe com segurança em 1 GiB. **Recomendação: 1 GiB com `--concurrency 2`; 2 GiB se a concorrência for maior que 2.** As parcelas estimadas ainda precisam ser confirmadas no Cloud Run.
 
+## Requisitos para a API (quem chama o fetcher)
+
+Achados 5 e 8 da revisão de segurança da Fase 3. O fetcher não muda; a API precisa cumprir isto quando passar a chamá-lo.
+
+1. **Uma única mensagem ao usuário para `blocked` e para falha de resolução de nome.** Hoje um nome que existe e resolve para IP privado devolve `blocked`, e um nome inexistente devolve `network`. Se a API repassar essa diferença, o usuário consegue enumerar nomes internos (por exemplo, zonas privadas do Cloud DNS, se um dia houver VPC). A API deve mostrar o mesmo texto genérico para `blocked` e para `network`, tanto no erro da página quanto em `media_error`. A categoria exata pode ir para métricas internas, nunca para a tela nem para a resposta da API.
+2. **Limite de taxa por usuário e por IP**, antes de chamar o fetcher. Uma única chamada a `/fetch` pode gerar até 126 requisições de saída, ou seja, 1 página + 20 mídias, cada uma com até 5 redirecionamentos ((1 + 20) × 6). Ela também pode baixar cerca de 62 MiB (2 MiB de HTML + 60 MiB de mídia) de um alvo escolhido pelo usuário. Sem limite, a plataforma vira amplificador contra terceiros. O limite precisa valer por conta Google (o `sub` do ID token) e por IP de origem, para que várias contas no mesmo IP, ou um IP com várias contas, não escapem. Os valores e onde guardar os contadores ficam para a Fase 4. Contadores com estado exigem decisão, porque a plataforma é stateless.
+
 ## Decisões abertas (sem implementação nesta fase)
 
 - **Mídia dentro de `<noscript>`:** sites com lazy-load colocam a imagem real ali. Extrair exigiria parsear o conteúdo do noscript como fragmento.
