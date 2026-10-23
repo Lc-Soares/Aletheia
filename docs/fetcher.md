@@ -116,21 +116,33 @@ Os testes usam resolvedor e transporte injetados. A única "política de teste" 
 
 ### Resolução de DNS
 
-- **c-ares, não `getaddrinfo`.** `dns.promises.Resolver` com `timeout` de 1,5 s e 2 tentativas, consultando `resolve4` e `resolve6` em paralelo. O `getaddrinfo` do sistema ocupa uma thread do threadpool do libuv (4 por padrão) até o timeout do sistema operacional, mesmo depois que o fetcher desistiu. Uma página com mídias em subdomínios de um DNS que nunca responde prendia as 4 threads e parava o zlib e o DNS de toda a instância (achado 4 da revisão). O c-ares não usa o threadpool.
-- **Um resolvedor por consulta**, cancelado (`cancel()`) quando a requisição aborta ou o prazo do download (HTML ou mídia) esgota. Assim, cancelar uma requisição não cancela as consultas de outra.
+- **c-ares, não `getaddrinfo`.** `dns.promises.Resolver` com `timeout` de 1 s e 2 tentativas, consultando `resolve4` e `resolve6` em paralelo. O `getaddrinfo` do sistema ocupa uma thread do threadpool do libuv (4 por padrão) até o timeout do sistema operacional, mesmo depois que o fetcher desistiu. Uma página com mídias em subdomínios de um DNS que nunca responde prendia as 4 threads e parava o zlib e o DNS de toda a instância (achado 4 da revisão). O c-ares não usa o threadpool.
+- **Prazo rígido de 3 s por salto** (`dnsHopMs`), independente do prazo do download. Ao esgotar, a resolução vira `timeout` e as consultas são canceladas. O pior caso fica previsível: não depende de quantos servidores DNS o sistema tem nem do recuo do c-ares. Medido contra um servidor UDP local que nunca responde (Node 24.22.1, Windows):
+
+  | Configuração | Pior caso por resolução |
+  | --- | --- |
+  | c-ares sozinho, `timeout` 1,5 s, 2 tentativas (antes) | cerca de 5,0 s |
+  | c-ares sozinho, `timeout` 1 s, 2 tentativas | cerca de 4,0 s (o c-ares dobra a espera na segunda tentativa) |
+  | c-ares sozinho, `timeout` 2 s, 1 tentativa | cerca de 2,0 s |
+  | **adotado: `timeout` 1 s, 2 tentativas, prazo de 3 s** | **3,0 s** (4 pacotes: 2 tentativas × 2 famílias) |
+
+  Por que 2 tentativas e não 1: com a regra de falhar fechado, um único pacote UDP perdido derrubaria a página com `network`. A segunda tentativa sai depois de 1 s e cabe no prazo. Com 1 tentativa e 2 s, a configuração seria mais simples e quase tão previsível, mas sem tolerância a perda.
+- **Um resolvedor por consulta**, cancelado (`cancel()`) quando a requisição aborta, o prazo do salto esgota ou o prazo do download (HTML ou mídia) esgota. Assim, cancelar uma requisição não cancela as consultas de outra.
 - **Uma família falha e a outra responde:**
   - se a falha é "sem registro" (`ENODATA` ou `ENOTFOUND`), segue com a família que respondeu (há nomes só com A ou só com AAAA);
   - qualquer outra falha (`ETIMEOUT`, `ESERVFAIL`, `EREFUSED`, resposta inválida etc.) **falha fechado** com `network`, porque não dá para garantir que vimos todos os IPs;
-  - nenhuma família com registro: `network`.
+  - nenhuma família com registro: `network`;
+  - prazo do salto esgotado com qualquer família pendente: `timeout` (também fechado, mesmo que a outra já tenha respondido).
 - **Diferença em relação ao `getaddrinfo`:** `resolve4` e `resolve6` consultam os servidores DNS configurados e não leem `/etc/hosts`. Nomes como `localhost` já são recusados antes, pela política de URL.
 - **Mitigação adicional:** `UV_THREADPOOL_SIZE=16` no Dockerfile, porque zlib e crypto continuam no threadpool.
 
-**Limitação a revisar com dados reais:** a regra de falhar fechado quando uma família dá erro diferente de "sem registro" troca disponibilidade por segurança. Servidores autoritativos que respondem SERVFAIL ou não respondem a AAAA existem e fariam o site inteiro falhar com `network`. Como a conexão é sempre feita num IP já validado, aceitar só a família que respondeu não abriria SSRF; só afrouxaria a regra de "todos os IPs". Rever com a taxa real de falhas depois do deploy. **O DNS real não foi testado:** os testes usam um cliente c-ares falso, e os valores de `timeout` e `tries` ainda não foram observados contra servidores reais nem contra o DNS do Cloud Run.
+**Limitação a revisar com dados reais:** a regra de falhar fechado quando uma família dá erro diferente de "sem registro" troca disponibilidade por segurança. Servidores autoritativos que respondem SERVFAIL ou não respondem a AAAA existem e fariam o site inteiro falhar com `network`. Como a conexão é sempre feita num IP já validado, aceitar só a família que respondeu não abriria SSRF; só afrouxaria a regra de "todos os IPs". Rever com a taxa real de falhas depois do deploy. **O DNS real não foi testado:** as combinações de famílias usam um cliente c-ares falso. O c-ares de verdade só foi exercitado contra um servidor DNS UDP local em 127.0.0.1 (respostas A/AAAA, NXDOMAIN e servidor mudo). Os valores de `timeout`, `tries` e prazo ainda não foram observados contra servidores reais, com perda de pacote real, nem contra o DNS do Cloud Run.
 
 ## Limites e justificativas
 
 | Limite | Valor | Justificativa |
 | --- | --- | --- |
+| DNS, por salto | 3 s | Pior caso previsível contra servidor mudo; c-ares com 1 s × 2 tentativas. Ver "Resolução de DNS". |
 | Conexão + TLS + cabeçalhos, por salto | 5 s | Servidor saudável responde cabeçalhos bem antes disso; corta servidores que seguram a conexão. |
 | HTML (redirecionamentos + corpo) | 10 s | O "cerca de 10 s" da arquitetura. |
 | Cada mídia (redirecionamentos + corpo) | 20 s | 15 MiB precisam de banda razoável; 20 s dá cerca de 6 Mbit/s. |
@@ -233,7 +245,7 @@ Todos os testes usam DNS e transporte simulados, ou um servidor HTTP local em 12
 - Redes sociais (Instagram, X, Facebook, TikTok), que costumam exigir login ou JavaScript.
 - HTTPS de ponta a ponta: SNI e verificação de certificado usam o hostname, mas não há teste com certificado TLS real.
 - IPv6 real (só a política foi testada).
-- DNS real: o resolvedor c-ares (`resolve4`/`resolve6`, timeout e tentativas) só foi testado com cliente falso; ver "Resolução de DNS".
+- DNS real: o c-ares (`resolve4`/`resolve6`, timeout, tentativas e prazo por salto) só foi testado com cliente falso e contra um servidor DNS local em 127.0.0.1; ver "Resolução de DNS".
 - Comportamento no Cloud Run: streaming NDJSON grande, memória por instância, ID token real da conta de serviço e alcance do servidor de metadados.
 - Workers de extração em 1 vCPU real: a disputa de CPU só foi simulada prendendo o processo a um núcleo no Windows.
 - Imagem Docker: não foi construída na máquina de desenvolvimento (sem Docker). O `.dockerignore` e o comando de produção têm teste, mas a imagem só é construída no CI.

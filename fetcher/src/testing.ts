@@ -1,6 +1,7 @@
 // Auxiliares só para testes. Este arquivo não entra na imagem (.dockerignore) e nada fora de
 // *.test.ts o importa. Nada aqui fala com a internet.
 import { createHmac, createSign, generateKeyPairSync } from "node:crypto";
+import { createSocket } from "node:dgram";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { Readable } from "node:stream";
@@ -100,6 +101,74 @@ ${paragraph(i).repeat(4)}</article>\n`;
   let body = "";
   for (let i = 0; head.length + body.length < targetBytes; i++) body += card(i);
   return `${head}<main>${body}</main></body></html>`;
+}
+
+// Servidor DNS UDP local para exercitar o c-ares de verdade, sem internet. Responde A e AAAA da
+// tabela, NOERROR sem resposta para tipo ausente (c-ares: ENODATA) e NXDOMAIN para nome ausente
+// (ENOTFOUND). "mudo" nunca responde, como um autoritativo do atacante.
+export type DnsRecords = Record<string, { A?: string[]; AAAA?: string[] }>;
+export type FakeDnsServer = { server: string; queries: () => number; close: () => Promise<void> };
+
+const DNS_TYPE_A = 1;
+const DNS_TYPE_AAAA = 28;
+
+function ipv6Bytes(address: string): Buffer {
+  const [head = "", tail] = address.split("::");
+  const groups = (part: string): string[] => (part === "" ? [] : part.split(":"));
+  const start = groups(head);
+  const end = tail === undefined ? [] : groups(tail);
+  const all = [...start, ...Array<string>(8 - start.length - end.length).fill("0"), ...end];
+  const bytes = Buffer.alloc(16);
+  all.forEach((group, i) => bytes.writeUInt16BE(parseInt(group, 16), i * 2));
+  return bytes;
+}
+
+function dnsAnswer(query: Buffer, records: DnsRecords): Buffer | null {
+  if (query.length < 12) return null;
+  const labels: string[] = [];
+  let offset = 12;
+  for (let length = query[offset] ?? 0; length > 0; length = query[offset] ?? 0) {
+    labels.push(query.subarray(offset + 1, offset + 1 + length).toString("latin1"));
+    offset += 1 + length;
+  }
+  const questionEnd = offset + 5; // byte zero + tipo (2) + classe (2)
+  if (questionEnd > query.length) return null;
+  const type = query.readUInt16BE(offset + 1);
+  const entry = records[labels.join(".").toLowerCase()];
+  const addresses = type === DNS_TYPE_A ? (entry?.A ?? []) : type === DNS_TYPE_AAAA ? (entry?.AAAA ?? []) : [];
+  const header = Buffer.alloc(12);
+  header.writeUInt16BE(query.readUInt16BE(0), 0); // mesmo ID
+  header.writeUInt16BE(entry === undefined ? 0x8183 : 0x8180, 2); // resposta; NXDOMAIN ou NOERROR
+  header.writeUInt16BE(1, 4);
+  header.writeUInt16BE(addresses.length, 6);
+  const answers = addresses.map((address) => {
+    const rdata = type === DNS_TYPE_A ? Buffer.from(address.split(".").map(Number)) : ipv6Bytes(address);
+    const fixed = Buffer.alloc(12);
+    fixed.writeUInt16BE(0xc00c, 0); // ponteiro para o nome da pergunta
+    fixed.writeUInt16BE(type, 2);
+    fixed.writeUInt16BE(1, 4); // classe IN
+    fixed.writeUInt32BE(60, 6); // TTL
+    fixed.writeUInt16BE(rdata.length, 10);
+    return Buffer.concat([fixed, rdata]);
+  });
+  return Buffer.concat([header, query.subarray(12, questionEnd), ...answers]);
+}
+
+export async function startFakeDnsServer(records: DnsRecords | "mudo"): Promise<FakeDnsServer> {
+  const socket = createSocket("udp4");
+  let queries = 0;
+  socket.on("message", (query, peer) => {
+    queries++;
+    if (records === "mudo") return;
+    const answer = dnsAnswer(query, records);
+    if (answer) socket.send(answer, peer.port, peer.address);
+  });
+  await new Promise<void>((resolve) => socket.bind(0, "127.0.0.1", resolve));
+  return {
+    server: `127.0.0.1:${socket.address().port}`,
+    queries: () => queries,
+    close: () => new Promise<void>((resolve) => socket.close(() => resolve())),
+  };
 }
 
 export type LocalServer = { server: Server; port: number; requests: IncomingMessage[]; connections: Socket[]; close: () => Promise<void> };

@@ -101,7 +101,7 @@ export async function safeFetch(
   try {
     let target = parseTargetUrl(raw, options.base, limits.maxUrlLength);
     for (let redirects = 0; ; redirects++) {
-      const address = await resolveTarget(target, deps.resolver, deps.policy, signal);
+      const address = await resolveTarget(target, deps.resolver, deps.policy, signal, limits.dnsHopMs);
       const response = await withDeadline(
         deps.transport({
           url: target.url,

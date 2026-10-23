@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 
 import { FetchError, toFetchError, withDeadline } from "./errors.ts";
 import { type AddressPolicy, canonicalAddress } from "./ip-policy.ts";
+import { DEFAULT_LIMITS } from "./limits.ts";
 import type { TargetUrl } from "./url-policy.ts";
 
 export type ResolvedAddress = { address: string; family: 4 | 6 };
@@ -17,7 +18,10 @@ export type DnsClient = {
 
 // c-ares não usa o threadpool do libuv (getaddrinfo usa, e uma thread presa num servidor DNS que
 // não responde só é liberada pelo timeout do sistema). Aqui o timeout e as tentativas são nossos.
-export const DNS_OPTIONS = Object.freeze({ timeout: 1_500, tries: 2 });
+// A segunda tentativa cobre a perda de um pacote UDP, que com a regra de falhar fechado viraria
+// network. Contra servidor mudo, o c-ares sozinho leva ~4 s (ele dobra a espera na segunda
+// tentativa); o prazo rígido por salto (dnsHopMs) corta em 3 s.
+export const DNS_OPTIONS = Object.freeze({ timeout: 1_000, tries: 2 });
 
 // "Sem registro desta família": o nome pode ter só A ou só AAAA.
 const NO_RECORDS = new Set(["ENODATA", "ENOTFOUND"]);
@@ -60,14 +64,18 @@ export async function resolveTarget(
   resolver: Resolver,
   policy: AddressPolicy,
   signal: AbortSignal,
+  deadlineMs: number = DEFAULT_LIMITS.dnsHopMs,
 ): Promise<ResolvedAddress> {
   if (target.ipVersion !== 0) return allowedAddress(target.hostname, policy);
 
+  // Prazo próprio por salto: o pior caso não depende do prazo do download, de quantos servidores
+  // DNS o sistema tem nem do recuo do c-ares. Ao esgotar, as consultas são canceladas.
+  const dnsSignal = AbortSignal.any([signal, AbortSignal.timeout(deadlineMs)]);
   let results: readonly ResolvedAddress[];
   try {
-    results = await withDeadline(resolver(target.hostname, signal), signal);
+    results = await withDeadline(resolver(target.hostname, dnsSignal), dnsSignal);
   } catch (error) {
-    throw toFetchError(error, signal);
+    throw toFetchError(error, dnsSignal);
   }
   if (results.length === 0) throw new FetchError("network");
   const allowed = results.map(({ address }) => allowedAddress(address, policy));

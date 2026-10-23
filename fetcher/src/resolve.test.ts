@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { Resolver as AresResolver } from "node:dns/promises";
 import { describe, test } from "node:test";
 
 import { FetchError, type FetchErrorCategory } from "./errors.ts";
 import { isPublicAddress } from "./ip-policy.ts";
+import { DEFAULT_LIMITS } from "./limits.ts";
 import { createDnsResolver, DNS_OPTIONS, type DnsClient, resolveTarget } from "./resolve.ts";
-import { fakeResolver } from "./testing.ts";
+import { type DnsRecords, type FakeDnsServer, fakeResolver, startFakeDnsServer } from "./testing.ts";
 import { parseTargetUrl } from "./url-policy.ts";
 
 const never = new AbortController().signal;
@@ -170,13 +172,87 @@ describe("resolvedor DNS (c-ares, resolve4 + resolve6)", () => {
     assert.equal(dns.cancelled, 0);
   });
 
-  test("timeout e tentativas do c-ares são definidos (não o padrão do sistema)", () => {
-    assert.deepEqual(DNS_OPTIONS, { timeout: 1_500, tries: 2 });
-  });
-
   test("produção não usa dns.lookup (getaddrinfo ocupa o threadpool do libuv)", async () => {
     const { readFile } = await import("node:fs/promises");
     const source = await readFile(new URL("./resolve.ts", import.meta.url), "utf8");
     assert.doesNotMatch(source, /\blookup\b/);
+  });
+});
+
+describe("prazo próprio do DNS por salto", () => {
+  test("resolvedor que nunca responde: timeout no prazo do salto, mesmo sem o prazo do download", { timeout: 5_000 }, async () => {
+    const pending = () => new Promise<never>(() => {});
+    const started = performance.now();
+    await assertRejects(resolveTarget(parseTargetUrl("https://lento.example/"), pending, isPublicAddress, never, 200), "timeout");
+    assert.ok(performance.now() - started < 1_000);
+  });
+
+  test("o prazo do salto cancela as consultas pendentes", { timeout: 5_000 }, async () => {
+    const dns = fakeDns("pendente", "pendente");
+    const resolver = createDnsResolver(dns.newClient);
+    await assertRejects(resolveTarget(parseTargetUrl("https://site.example/"), resolver, isPublicAddress, never, 100), "timeout");
+    assert.equal(dns.cancelled, 1);
+  });
+
+  test("padrões: 1 s por tentativa, 2 tentativas e prazo rígido de 3 s por salto", () => {
+    assert.deepEqual(DNS_OPTIONS, { timeout: 1_000, tries: 2 });
+    assert.equal(DEFAULT_LIMITS.dnsHopMs, 3_000);
+  });
+});
+
+// c-ares de verdade (dns.promises.Resolver) contra um servidor DNS UDP local, sem internet.
+const aresAt = (server: string) =>
+  createDnsResolver(() => {
+    const client = new AresResolver(DNS_OPTIONS);
+    client.setServers([server]);
+    return client;
+  });
+
+async function withDns<T>(records: DnsRecords | "mudo", run: (dns: FakeDnsServer) => Promise<T>): Promise<T> {
+  const dns = await startFakeDnsServer(records);
+  try {
+    return await run(dns);
+  } finally {
+    await dns.close();
+  }
+}
+
+describe("c-ares real contra servidor DNS local", () => {
+  test("A respondido e AAAA sem registro (ENODATA): resolve pelo IPv4", async () => {
+    await withDns({ "site.example": { A: ["93.184.216.34"] } }, async (dns) => {
+      const result = await resolveTarget(parseTargetUrl("https://site.example/"), aresAt(dns.server), isPublicAddress, never);
+      assert.deepEqual(result, { address: "93.184.216.34", family: 4 });
+    });
+  });
+
+  test("A e AAAA respondidos: devolve as duas famílias", async () => {
+    await withDns({ "site.example": { A: ["93.184.216.34"], AAAA: ["2606:2800:220:1::1"] } }, async (dns) => {
+      assert.deepEqual(await aresAt(dns.server)("site.example"), [
+        { address: "93.184.216.34", family: 4 },
+        { address: "2606:2800:220:1::1", family: 6 },
+      ]);
+    });
+  });
+
+  test("AAAA privado ao lado de A público: bloqueia", async () => {
+    await withDns({ "site.example": { A: ["93.184.216.34"], AAAA: ["fd00::1"] } }, async (dns) => {
+      await assertRejects(resolveTarget(parseTargetUrl("https://site.example/"), aresAt(dns.server), isPublicAddress, never), "blocked");
+    });
+  });
+
+  test("nome inexistente (NXDOMAIN nas duas famílias): network", async () => {
+    await withDns({}, async (dns) => {
+      await assertRejects(resolveTarget(parseTargetUrl("https://nao-existe.example/"), aresAt(dns.server), isPublicAddress, never), "network");
+    });
+  });
+
+  test("servidor mudo: timeout dentro do prazo do salto (pior caso previsível)", { timeout: 15_000 }, async (t) => {
+    await withDns("mudo", async (dns) => {
+      const started = performance.now();
+      await assertRejects(resolveTarget(parseTargetUrl("https://mudo.example/"), aresAt(dns.server), isPublicAddress, never), "timeout");
+      const elapsed = performance.now() - started;
+      t.diagnostic(`servidor mudo: ${Math.round(elapsed)} ms, ${dns.queries()} pacotes recebidos`);
+      assert.ok(elapsed < DEFAULT_LIMITS.dnsHopMs + 500, `levou ${Math.round(elapsed)} ms`);
+    });
   });
 });
