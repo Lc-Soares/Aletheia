@@ -1,12 +1,9 @@
 import { createCallerVerifier } from "./auth.ts";
 import { type Config, loadConfig } from "./config.ts";
-import { createWorkerExtractor, type Extractor } from "./extract-pool.ts";
-import { fetchPage, type PageDeps } from "./fetch-page.ts";
-import { isPublicAddress } from "./ip-policy.ts";
-import { DEFAULT_LIMITS } from "./limits.ts";
-import { systemResolver } from "./resolve.ts";
+import type { Extractor } from "./extract-pool.ts";
+import { fetchPage } from "./fetch-page.ts";
+import { createProductionDeps } from "./production-deps.ts";
 import { createFetcherServer, shutdown } from "./server.ts";
-import { createNodeTransport } from "./transport.ts";
 
 const SHUTDOWN_GRACE_MS = 10_000;
 
@@ -34,14 +31,7 @@ async function checkExtractorOrExit(extract: Extractor): Promise<void> {
 const config = loadConfigOrExit();
 
 // Produção usa sempre a política pública e os limites padrão; não há chave para mudá-los.
-const limits = { ...DEFAULT_LIMITS };
-const deps: PageDeps = {
-  resolver: systemResolver,
-  transport: createNodeTransport(),
-  policy: isPublicAddress,
-  limits,
-  extract: createWorkerExtractor(limits),
-};
+const deps = createProductionDeps();
 await checkExtractorOrExit(deps.extract);
 
 const server = createFetcherServer({
