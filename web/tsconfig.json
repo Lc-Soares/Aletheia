@@ -1,4 +1,9 @@
 {
   "extends": "../tsconfig.base.json",
-  "include": ["src"]
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "allowJs": true,
+    "checkJs": true
+  },
+  "include": ["public", "test", "dev-proxy.mjs"]
 }
