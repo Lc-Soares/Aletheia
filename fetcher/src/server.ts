@@ -104,7 +104,10 @@ async function readJsonUrl(req: IncomingMessage): Promise<string> {
 
 function mediaLine(download: MediaDownload): Record<string, unknown> {
   const { url, kind, source } = download;
-  if (!download.ok) return { type: "media_error", url, kind, source, error: download.error };
+  if (!download.ok) {
+    const { error, httpStatus } = download;
+    return httpStatus === undefined ? { type: "media_error", url, kind, source, error } : { type: "media_error", url, kind, source, error, httpStatus };
+  }
   const { contentType, size, sha256, bytes } = download;
   return { type: "media", url, kind, source, contentType, size, sha256, data: bytes.toString("base64") };
 }
@@ -192,7 +195,8 @@ async function fetchAndStream(
     if (error instanceof OverloadedError) throw busy();
     if (!(error instanceof FetchError)) throw error;
     note({ outcome: error.category });
-    sendJson(res, 422, { error: error.category, message: error.message });
+    const { category, message, httpStatus } = error;
+    sendJson(res, 422, httpStatus === undefined ? { error: category, message } : { error: category, message, httpStatus });
   }
 }
 

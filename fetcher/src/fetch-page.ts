@@ -8,7 +8,7 @@ import { type FetcherDeps, safeFetch } from "./safe-fetch.ts";
 
 export type MediaDownload =
   | (MediaRef & { ok: true; contentType: string; size: number; sha256: string; bytes: Buffer })
-  | (MediaRef & { ok: false; error: FetchErrorCategory });
+  | (MediaRef & { ok: false; error: FetchErrorCategory; httpStatus?: number });
 
 // O extrator é injetado: em produção, o pool de workers criado uma vez em main.ts.
 export type PageDeps = FetcherDeps & { extract: Extractor };
@@ -36,7 +36,8 @@ async function downloadOne(ref: MediaRef, deps: FetcherDeps, signal: AbortSignal
     const sha256 = createHash("sha256").update(body).digest("hex");
     return { ...ref, ok: true, contentType, size: body.length, sha256, bytes: body };
   } catch (error) {
-    return { ...ref, ok: false, error: toFetchError(error, signal).category };
+    const { category, httpStatus } = toFetchError(error, signal);
+    return httpStatus === undefined ? { ...ref, ok: false, error: category } : { ...ref, ok: false, error: category, httpStatus };
   }
 }
 

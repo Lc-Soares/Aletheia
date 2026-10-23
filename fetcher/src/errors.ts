@@ -20,13 +20,19 @@ const MESSAGES: Record<FetchErrorCategory, string> = {
   network: "Falha de rede",
 };
 
+const isHttpStatus = (value: number | undefined): value is number =>
+  Number.isInteger(value) && (value as number) >= 100 && (value as number) <= 599;
+
 export class FetchError extends Error {
   readonly category: FetchErrorCategory;
+  // Só o número do status, e só em upstream_status: nunca corpo nem cabeçalhos do site.
+  declare readonly httpStatus?: number;
 
-  constructor(category: FetchErrorCategory) {
+  constructor(category: FetchErrorCategory, httpStatus?: number) {
     super(MESSAGES[category]);
     this.name = "FetchError";
     this.category = category;
+    if (category === "upstream_status" && isHttpStatus(httpStatus)) Object.defineProperty(this, "httpStatus", { value: httpStatus, enumerable: true });
   }
 }
 
