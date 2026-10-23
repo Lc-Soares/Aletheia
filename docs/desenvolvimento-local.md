@@ -9,6 +9,26 @@ Roda web e API juntos, na mesma origem, sem `firebase-tools`.
 
 O proxy (`web/dev-proxy.mjs`) serve `web/public`, encaminha `/api/**` para a API (porta `API_PORT`, padrão 8080) e aplica os cabeçalhos do `firebase.json`, inclusive a CSP. Escuta só em 127.0.0.1. A porta do proxy muda com `DEV_PORT`.
 
+## Testes
+
+O `npm run test` de cada workspace passa por `test-support/run-tests.js`, que roda o `node --test` com o guarda de unhandled rejection e **reprova quando nenhum teste passou de verdade**: glob vazio, total 0, todos pulados, ou um arquivo `*.test.*` sem nenhum `test()`. Sem isso, o `node --test` sai com 0 nesses casos. A contagem vem de `test-support/count-reporter.js`, e a decisão, de `test-support/verdict.js`. As fixtures de `test-support/fixtures/` só rodam pelos testes do próprio runner (`fetcher/src/test-guard.test.ts`).
+
+**Versão mínima do Node: 24** (`engines` do `package.json`; o CI usa `node-version: 24`). O runner foi validado no Node 24.22.1 local; no CI e no Codespace, ele é validado pelos mesmos testes. O `count-reporter` depende do formato dos eventos do `node:test`:
+- `test:pass`/`test:fail` com `data.name`, `data.file`, `data.details.type`, `skip` e `todo`;
+- um evento com o nome do próprio arquivo quando o arquivo não tem nenhum teste.
+
+**Risco:** uma versão futura do Node pode mudar esse formato. O runner foi feito para falhar fechado.
+
+O que já reprova em vez de aprovar:
+- nenhum evento de teste, linha de contagem ausente ou resumo do spec ausente ou zerado;
+- **qualquer evento de teste sem `data.file`** (ou com `data.file` vazio). Ele aparece como "Formato de eventos do node:test não reconhecido". Sem o arquivo não dá para reconhecer o invólucro, então o runner não conta às cegas.
+
+O que ainda não cobre:
+- se o Node continuar mandando `data.file` mas mudar o **nome** do evento do arquivo vazio (hoje é o caminho do arquivo relativo ao diretório atual), o invólucro deixa de ser reconhecido e conta como um teste que passou. Um arquivo sem testes voltaria a passar despercebido;
+- se o Node mudar o significado de `skip`/`todo` ou de `details.type`, as contagens de "passou" e de suítes podem ficar erradas sem que o formato pareça desconhecido.
+
+Ao trocar a versão do Node, rode `npm run check`. Os testes de `fetcher/src/test-guard.test.ts` usam o `node:test` de verdade com as fixtures, com as contagens exatas, e acusam essas mudanças.
+
 ## Fetcher
 
 O fetcher ainda não é chamado pela API (isso entra na Fase 4). Para subir só ele:

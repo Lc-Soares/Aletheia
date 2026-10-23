@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/main.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --import ../test-support/fail-on-unhandled-rejection.js --test \"src/**/*.test.ts\""
+    "test": "node ../test-support/run-tests.js \"src/**/*.test.ts\""
   },
   "dependencies": {
     "google-auth-library": "^11.3.1"

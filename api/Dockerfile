@@ -10,7 +10,9 @@ COPY fetcher/package.json fetcher/
 RUN npm ci --ignore-scripts
 COPY tsconfig.base.json eslint.config.js ./
 COPY api/ api/
-RUN npm run typecheck --workspace api && npm run test --workspace api
+# Só tipos: o .dockerignore remove *.test.ts e testing.ts, então os testes rodam no job "check" do CI
+# (aqui rodariam zero testes e passariam; ver api/src/dockerfile.test.ts).
+RUN npm run typecheck --workspace api
 
 FROM node:24-slim AS deps
 WORKDIR /app
