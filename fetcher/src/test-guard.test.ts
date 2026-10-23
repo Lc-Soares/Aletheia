@@ -56,12 +56,12 @@ const WORKSPACES = [
   { name: "fetcher", glob: "src/**/*.test.ts" },
 ];
 
-function runRunner(glob: string, extraEnv: Record<string, string> = {}) {
+function runRunner(globs: string | string[], extraEnv: Record<string, string> = {}) {
   const env: Record<string, string | undefined> = { ...process.env, ...extraEnv };
   delete env["NODE_TEST_CONTEXT"];
   delete env["NODE_OPTIONS"];
   if (!("FORCE_COLOR" in extraEnv)) delete env["FORCE_COLOR"];
-  return spawnSync(process.execPath, [RUNNER, glob], { cwd: FIXTURES, env, encoding: "utf8" });
+  return spawnSync(process.execPath, [RUNNER, ...[globs].flat()], { cwd: FIXTURES, env, encoding: "utf8" });
 }
 
 describe("runner de testes: reprova quando nenhum teste passou", () => {
@@ -75,6 +75,14 @@ describe("runner de testes: reprova quando nenhum teste passou", () => {
     const result = runRunner("no-tests.test.js");
     assert.equal(result.status, 1);
     assert.match(result.stderr, /Nenhum teste executado: no-tests\.test\.js/);
+  });
+
+  test("arquivo sem testes junto com um que tem: código 1 e o arquivo vazio apontado", () => {
+    // O node:test conta o arquivo vazio como 1 teste que passou; o total não basta.
+    const result = runRunner(["passing.test.js", "no-tests.test.js"]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Arquivo de teste sem nenhum teste: no-tests\.test\.js/);
+    assert.doesNotMatch(result.stderr, /aletheia-test-count/, "a linha de contagem não vaza para o terminal");
   });
 
   test("glob que não encontra arquivo: código 1 e aviso", () => {
