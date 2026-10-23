@@ -19,6 +19,8 @@ export type Limits = {
   extractConcurrency: number;
   maxInFlightFetches: number;
   dnsHopMs: number;
+  streamIdleMs: number;
+  streamTotalMs: number;
 };
 
 const MIB = 1024 * 1024;
@@ -43,6 +45,8 @@ export const DEFAULT_LIMITS: Readonly<Limits> = Object.freeze({
   extractConcurrency: 2,
   maxInFlightFetches: 2,
   dnsHopMs: 3_000,
+  streamIdleMs: 10_000,
+  streamTotalMs: 60_000,
 });
 
 // Só deixa reduzir: qualquer valor acima do padrão, inválido ou ausente vira o padrão.

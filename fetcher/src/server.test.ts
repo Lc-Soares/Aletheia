@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { request } from "node:http";
-import type { AddressInfo } from "node:net";
+import { type AddressInfo, connect, type Socket } from "node:net";
 import { after, before, describe, test } from "node:test";
 
 import type { CallerVerifier } from "./auth.ts";
@@ -10,7 +10,7 @@ import { FetchError, OverloadedError } from "./errors.ts";
 import { createWorkerExtractor } from "./extract-pool.ts";
 import { fetchPage } from "./fetch-page.ts";
 import { isPublicAddress } from "./ip-policy.ts";
-import { resolveLimits } from "./limits.ts";
+import { type Limits, resolveLimits } from "./limits.ts";
 import { createFetcherServer, domainHash, type LogEntry, type PageFetcher, shutdown } from "./server.ts";
 import { fakeResolver, html, image, routeTransport } from "./testing.ts";
 
@@ -38,9 +38,9 @@ const realFetcher: PageFetcher = (url, signal) =>
 
 type Started = { base: string; logs: LogEntry[]; close: () => Promise<void> };
 
-async function start(fetcher: PageFetcher = realFetcher): Promise<Started> {
+async function start(fetcher: PageFetcher = realFetcher, limits?: Partial<Limits>): Promise<Started> {
   const logs: LogEntry[] = [];
-  const server = createFetcherServer({ verifier, fetchPage: fetcher, log: (entry) => logs.push(entry) });
+  const server = createFetcherServer({ verifier, fetchPage: fetcher, log: (entry) => logs.push(entry), limits });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   return {
     base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
@@ -334,6 +334,106 @@ describe("serviço do fetcher: teto de requisições em andamento", () => {
       assert.equal(res.status, 503);
       assert.equal(res.headers.get("retry-after"), "1");
       assert.deepEqual(await res.json(), { error: "Serviço ocupado" });
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+describe("serviço do fetcher: prazos de escrita da resposta", () => {
+  const MIB = 1024 * 1024;
+  const bytes = Buffer.alloc(15 * MIB, 7); // a mesma referência nas 4 mídias: 60 MiB de resposta
+  const download = (i: number) => ({
+    url: `https://cdn.example/${i}.jpg`,
+    kind: "image" as const,
+    source: "img" as const,
+    ok: true as const,
+    contentType: "image/jpeg",
+    size: bytes.length,
+    sha256: "0".repeat(64),
+    bytes,
+  });
+  const big = { finalUrl: "https://noticias.example/", title: "t", headline: null, media: [], downloads: [1, 2, 3, 4].map(download) };
+  const small = { finalUrl: "https://noticias.example/", title: "t", headline: null, media: [], downloads: [] };
+  const bigOrSmall: PageFetcher = async (url) => (url.endsWith("/grande") ? big : small);
+
+  // Chamador por socket cru que envia o pedido e nunca lê a resposta.
+  function stalledCaller(base: string): Socket {
+    const body = JSON.stringify({ url: "https://noticias.example/grande" });
+    const { port } = new URL(base);
+    const socket = connect(Number(port), "127.0.0.1", () => {
+      socket.write(
+        `POST /fetch HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer ${GOOD_TOKEN}\r\nContent-Type: application/json\r\n` +
+          `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+      );
+    });
+    socket.pause();
+    socket.on("error", () => {});
+    return socket;
+  }
+
+  async function statusOf(base: string): Promise<number> {
+    const res = await post(base, { url: "https://noticias.example/pequena" });
+    await res.text();
+    return res.status;
+  }
+
+  // Duas vagas presas por chamadores que não leem; devolve quando a terceira volta a receber 200.
+  async function thirdRequestRecovers(base: string, giveUpMs: number): Promise<{ sawBusy: boolean; recoveredMs: number | null }> {
+    const started = performance.now();
+    const stalled = [stalledCaller(base), stalledCaller(base)];
+    try {
+      let sawBusy = false;
+      while (performance.now() - started < giveUpMs) {
+        const status = await statusOf(base);
+        if (status === 503) sawBusy = true;
+        if (status === 200 && sawBusy) return { sawBusy, recoveredMs: performance.now() - started };
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      return { sawBusy, recoveredMs: null };
+    } finally {
+      for (const socket of stalled) socket.destroy();
+    }
+  }
+
+  test("chamadores que param de ler perdem a vaga pelo prazo de inatividade", { timeout: 20_000 }, async (t) => {
+    const s = await start(bigOrSmall, { streamIdleMs: 300 });
+    try {
+      const { sawBusy, recoveredMs } = await thirdRequestRecovers(s.base, 5_000);
+      t.diagnostic(`terceira requisição voltou a receber 200 em ${recoveredMs === null ? "nunca" : Math.round(recoveredMs)} ms`);
+      assert.ok(sawBusy, "as duas vagas chegaram a ficar presas");
+      assert.ok(recoveredMs !== null && recoveredMs < 3_000, "a vaga voltou logo depois do prazo");
+    } finally {
+      await s.close();
+    }
+  });
+
+  test("prazo total da resposta corta mesmo sem passar do prazo de inatividade", { timeout: 20_000 }, async (t) => {
+    const s = await start(bigOrSmall, { streamTotalMs: 500 }); // inatividade fica no padrão (10 s)
+    try {
+      const { sawBusy, recoveredMs } = await thirdRequestRecovers(s.base, 5_000);
+      t.diagnostic(`terceira requisição voltou a receber 200 em ${recoveredMs === null ? "nunca" : Math.round(recoveredMs)} ms`);
+      assert.ok(sawBusy);
+      assert.ok(recoveredMs !== null && recoveredMs < 3_000);
+    } finally {
+      await s.close();
+    }
+  });
+
+  test("origem lenta não conta como inatividade: a resposta de quem lê não é cortada", { timeout: 20_000 }, async () => {
+    // O prazo de inatividade só corre enquanto o fetcher espera o drain; aqui a origem leva 3 ×
+    // streamIdleMs para devolver o resultado e o chamador lê normalmente.
+    const slow: PageFetcher = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      return { ...big, downloads: [download(1)] };
+    };
+    const s = await start(slow, { streamIdleMs: 200, streamTotalMs: 5_000 });
+    try {
+      const res = await post(s.base, { url: "https://noticias.example/" });
+      assert.equal(res.status, 200);
+      const lines = (await res.text()).trim().split("\n").map((line) => JSON.parse(line) as { type: string; size?: number });
+      assert.deepEqual(lines.map((line) => line.type), ["page", "media", "done"]);
+      assert.equal(lines[1]?.size, 15 * MIB);
     } finally {
       await s.close();
     }

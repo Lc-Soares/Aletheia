@@ -157,7 +157,9 @@ Os testes usam resolvedor e transporte injetados. A única "política de teste" 
 | Extração (worker): prazo | 2,5 s | Inclui subir o worker. Ver "Extração isolada em worker". |
 | Extração (worker): heap | 128 MiB (old) + 32 MiB (young) | Página legítima de 2 MiB usa cerca de 90 MiB de RSS; estourar vira `too_large`. |
 | Extrações simultâneas | 2 | Fila compartilhada pela instância, de até 4 (2 × concorrência); acima disso, 503. Quem espera desiste pelo prazo da página. |
-| Requisições `/fetch` em andamento | 2 | Cada uma pode segurar até cerca de 126 MiB; acima disso, 503 rápido, depois da autenticação e antes de ler o corpo. A vaga só volta no fim do streaming. |
+| Requisições `/fetch` em andamento | 2 | Cada uma pode segurar até cerca de 126 MiB; acima disso, 503 rápido, depois da autenticação e antes de ler o corpo. A vaga só volta no fim do streaming, que tem os dois prazos abaixo. |
+| Resposta NDJSON: inatividade de escrita | 10 s | Conta só enquanto o fetcher espera o `drain` de uma fatia de 64 KiB, ou seja, enquanto quem chamou não está lendo. Um consumidor saudável em memória, na mesma região, esvazia 64 KiB em milissegundos; 10 s sem esvaziar 64 KiB é menos de 6,4 KB/s, na prática um leitor parado. Esgotado, a resposta é destruída e a vaga volta. Uma origem lenta não conta: o `fetchPage` termina antes do `writeHead`. |
+| Resposta NDJSON: prazo total | 60 s | Desde o `writeHead`. A maior resposta tem cerca de 80 MiB (60 MiB de mídia em base64 mais a linha `page`); 60 s exigem cerca de 11 Mbit/s, muito abaixo da rede entre serviços do Cloud Run. Corta o leitor que lê aos poucos para fugir da inatividade. Com o prazo da página (30 s), uma vaga fica presa no máximo cerca de 90 s, contra os 300 s padrão do Cloud Run. |
 | Redirecionamentos | 5 | Definido na arquitetura. |
 | Cabeçalhos de resposta | 16 KiB | Padrão do Node; cabeçalhos maiores são anormais. |
 | URL | 2048 caracteres | Limite prático de navegadores e CDNs. |
@@ -228,6 +230,12 @@ Achados 5 e 8 da primeira revisão de segurança da Fase 3, e o 503 da segunda. 
 3. **Tratar `503` com `Retry-After`.** O fetcher responde `503 {"error":"Serviço ocupado"}` com `Retry-After: 1` quando a instância já tem 2 requisições em andamento ou a fila do worker está cheia. A API deve:
    - tentar de novo poucas vezes (por exemplo, até 2), com espera curta que respeite o `Retry-After` e um limite total que caiba no prazo da requisição do usuário;
    - esgotadas as tentativas, mostrar ao usuário uma mensagem clara, por exemplo "O serviço está ocupado. Tente de novo em alguns instantes.", sem repassar status, cabeçalhos ou qualquer detalhe interno do fetcher.
+4. **Consumir o stream do fetcher com prazo próprio, em memória, sem amarrar a leitura ao ritmo do usuário final** (achado 1 da terceira revisão). Cada resposta do fetcher segura uma das 2 vagas da instância até terminar. Se a API repassasse o NDJSON ao navegador respeitando backpressure, quem controlaria o ritmo seria o usuário: duas abas pausadas deixariam a instância em 503. A API deve:
+   - ler o NDJSON inteiro do fetcher para a memória o mais rápido que puder, com um prazo total menor que o `streamTotalMs` do fetcher (60 s);
+   - processar e enviar o relatório ao usuário a partir da própria memória, desacoplado da leitura do fetcher;
+   - descartar tudo no `finally` da requisição, como o resto da plataforma (stateless).
+
+   O fetcher corta quem não lê por 10 s ou passa de 60 s, mas isso é a última linha de defesa, não o ritmo normal.
 
 ## Decisões abertas (sem implementação nesta fase)
 

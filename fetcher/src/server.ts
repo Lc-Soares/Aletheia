@@ -5,7 +5,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { type CallerVerifier, extractBearerToken } from "./auth.ts";
 import { FetchError, OverloadedError } from "./errors.ts";
 import type { MediaDownload, PageResult } from "./fetch-page.ts";
-import { DEFAULT_LIMITS } from "./limits.ts";
+import { type Limits, resolveLimits } from "./limits.ts";
 
 // Só campos sem dado do usuário: no máximo um hash truncado do domínio, nunca URL ou caminho.
 export type LogEntry = {
@@ -18,9 +18,19 @@ export type LogEntry = {
 };
 
 export type PageFetcher = (url: string, signal: AbortSignal) => Promise<PageResult>;
-export type FetcherServerOptions = { verifier: CallerVerifier; fetchPage: PageFetcher; log: (entry: LogEntry) => void };
+export type FetcherServerOptions = {
+  verifier: CallerVerifier;
+  fetchPage: PageFetcher;
+  log: (entry: LogEntry) => void;
+  limits?: Partial<Limits>; // passa por resolveLimits: só reduz (testes); produção usa os padrões
+};
 
-type InFlight = { count: number; readonly max: number };
+// Vagas de /fetch em andamento e limites da instância.
+type ServerState = { inFlight: number; readonly limits: Limits };
+
+// Cada linha sai em fatias de 64 KiB, para que "sem progresso" seja medido de verdade: com um único
+// write de ~20 MiB (mídia em base64), um drain mediria o tempo de enviar tudo, não a inatividade.
+const WRITE_SLICE_BYTES = 64 * 1024;
 
 const ROUTES = new Map([
   ["/healthz", "GET"],
@@ -99,18 +109,33 @@ function mediaLine(download: MediaDownload): Record<string, unknown> {
   return { type: "media", url, kind, source, contentType, size, sha256, data: bytes.toString("base64") };
 }
 
-async function writeLine(res: ServerResponse, value: unknown, signal: AbortSignal): Promise<void> {
-  if (!res.write(`${JSON.stringify(value)}\n`)) await once(res, "drain", { signal });
+// O prazo de inatividade só corre enquanto se espera o drain (quem chamou não está lendo).
+// As fatias são cortadas nos bytes, não na string, para não partir caracteres UTF-8.
+async function writeLine(res: ServerResponse, value: unknown, signal: AbortSignal, idleMs: number): Promise<void> {
+  const line = Buffer.from(`${JSON.stringify(value)}\n`, "utf8");
+  for (let offset = 0; offset < line.length; offset += WRITE_SLICE_BYTES) {
+    if (!res.write(line.subarray(offset, offset + WRITE_SLICE_BYTES))) {
+      await once(res, "drain", { signal: AbortSignal.any([signal, AbortSignal.timeout(idleMs)]) });
+    }
+  }
 }
 
 // NDJSON em streaming: uma linha "page", uma por mídia e "done". Os bytes vão em base64.
-async function streamResult(res: ServerResponse, result: PageResult, signal: AbortSignal): Promise<void> {
+// Prazos: total desde o writeHead e inatividade em cada espera de drain. Esgotado qualquer um, a
+// resposta é destruída e a vaga volta pelo finally de handleFetch (achado 1 da terceira revisão).
+async function streamResult(res: ServerResponse, result: PageResult, signal: AbortSignal, limits: Limits): Promise<void> {
+  const streamSignal = AbortSignal.any([signal, AbortSignal.timeout(limits.streamTotalMs)]);
   res.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", ...SECURITY_HEADERS });
-  const { finalUrl, title, headline, media } = result;
-  await writeLine(res, { type: "page", finalUrl, title, headline, media }, signal);
-  for (const download of result.downloads) await writeLine(res, mediaLine(download), signal);
-  await writeLine(res, { type: "done" }, signal);
-  res.end();
+  try {
+    const { finalUrl, title, headline, media } = result;
+    await writeLine(res, { type: "page", finalUrl, title, headline, media }, streamSignal, limits.streamIdleMs);
+    for (const download of result.downloads) await writeLine(res, mediaLine(download), streamSignal, limits.streamIdleMs);
+    await writeLine(res, { type: "done" }, streamSignal, limits.streamIdleMs);
+    res.end();
+  } catch (error) {
+    res.destroy();
+    throw error;
+  }
 }
 
 const busy = (): HttpError => new HttpError(503, "busy", "Serviço ocupado");
@@ -119,6 +144,7 @@ async function fetchAndStream(
   req: IncomingMessage,
   res: ServerResponse,
   options: FetcherServerOptions,
+  limits: Limits,
   note: (fields: Partial<LogEntry>) => void,
 ): Promise<void> {
   const url = await readJsonUrl(req);
@@ -129,7 +155,7 @@ async function fetchAndStream(
   try {
     const result = await options.fetchPage(url, controller.signal);
     note({ outcome: "ok" });
-    await streamResult(res, result, controller.signal);
+    await streamResult(res, result, controller.signal, limits);
   } catch (error) {
     if (error instanceof OverloadedError) throw busy();
     if (!(error instanceof FetchError)) throw error;
@@ -144,16 +170,16 @@ async function handleFetch(
   req: IncomingMessage,
   res: ServerResponse,
   options: FetcherServerOptions,
-  inFlight: InFlight,
+  state: ServerState,
   note: (fields: Partial<LogEntry>) => void,
 ): Promise<void> {
   await authenticate(req, options.verifier);
-  if (inFlight.count >= inFlight.max) throw busy();
-  inFlight.count++;
+  if (state.inFlight >= state.limits.maxInFlightFetches) throw busy();
+  state.inFlight++;
   try {
-    await fetchAndStream(req, res, options, note);
+    await fetchAndStream(req, res, options, state.limits, note);
   } finally {
-    inFlight.count--;
+    state.inFlight--;
   }
 }
 
@@ -161,7 +187,7 @@ async function route(
   req: IncomingMessage,
   res: ServerResponse,
   options: FetcherServerOptions,
-  inFlight: InFlight,
+  state: ServerState,
   path: string,
   note: (fields: Partial<LogEntry>) => void,
 ): Promise<void> {
@@ -170,7 +196,7 @@ async function route(
   if (req.method !== method) return sendJson(res, 405, { error: "Método não permitido" }, { Allow: method });
   if (path === "/healthz") return sendJson(res, 200, { status: "ok" });
   try {
-    await handleFetch(req, res, options, inFlight, note);
+    await handleFetch(req, res, options, state, note);
   } catch (error) {
     if (!(error instanceof HttpError)) throw error;
     note({ outcome: error.outcome });
@@ -182,7 +208,7 @@ async function route(
 }
 
 export function createFetcherServer(options: FetcherServerOptions): Server {
-  const inFlight: InFlight = { count: 0, max: DEFAULT_LIMITS.maxInFlightFetches };
+  const state: ServerState = { inFlight: 0, limits: resolveLimits(options.limits) };
   const server = createServer({ maxHeaderSize: 8 * 1024 }, (req, res) => {
     const started = performance.now();
     const path = (req.url ?? "").split("?")[0] ?? "";
@@ -200,7 +226,7 @@ export function createFetcherServer(options: FetcherServerOptions): Server {
         outcome: entry.outcome ?? "-",
       });
     });
-    route(req, res, options, inFlight, path, note).catch(() => {
+    route(req, res, options, state, path, note).catch(() => {
       if (!res.headersSent) sendJson(res, 500, { error: "Erro interno" });
       else res.destroy();
     });
