@@ -5,10 +5,10 @@ import { readdirSync, readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import { FetchError } from "./errors.ts";
-import { type MediaDownload, fetchPage } from "./fetch-page.ts";
+import { createWorkerExtractor } from "./extract-pool.ts";
+import { type MediaDownload, fetchPage, type PageDeps } from "./fetch-page.ts";
 import { isPublicAddress } from "./ip-policy.ts";
 import { type Limits, resolveLimits } from "./limits.ts";
-import type { FetcherDeps } from "./safe-fetch.ts";
 import { type FakeResponse, fakeResolver, fakeTransport, html, image, redirect, routeTransport } from "./testing.ts";
 import type { Transport } from "./transport.ts";
 
@@ -18,12 +18,10 @@ const DNS = fakeResolver({
   "interno.example": ["10.1.2.3"],
 });
 
-const deps = (transport: Transport, limits: Partial<Limits> = {}): FetcherDeps => ({
-  resolver: DNS,
-  transport,
-  policy: isPublicAddress,
-  limits: resolveLimits(limits),
-});
+function deps(transport: Transport, overrides: Partial<Limits> = {}): PageDeps {
+  const limits = resolveLimits(overrides);
+  return { resolver: DNS, transport, policy: isPublicAddress, limits, extract: createWorkerExtractor(limits) };
+}
 
 const sha256 = (data: string | Buffer): string => createHash("sha256").update(data).digest("hex");
 const ok = (d: MediaDownload | undefined) => (d?.ok ? d : assert.fail(`esperava sucesso: ${JSON.stringify(d)}`));

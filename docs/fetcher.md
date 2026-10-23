@@ -14,9 +14,9 @@ Serviço isolado que recebe a URL enviada pelo usuário, baixa a página e as m�
 
    A validação no código é a segunda camada, caso o IAM seja mal configurado.
 4. **Conta de serviço própria do fetcher, sem nenhum papel IAM.** O servidor de metadados do Google Cloud continua alcançável pela rede do contêiner. O código bloqueia 169.254.169.254 e `metadata.google.internal`, mas se algum dia houver um desvio, o token dessa conta não pode dar acesso a nada.
-5. **Concorrência baixa por instância e limite de instâncias.** Cada requisição pode ocupar até 60 MiB de mídia em memória, mais a cópia em base64 de cada mídia durante a serialização (cerca de 4/3 do tamanho). Começar com:
-   - `--concurrency` entre 2 e 4;
-   - memória de 1 GiB;
+5. **Concorrência baixa por instância e limite de instâncias.** A conta de memória está em "Orçamento de memória por instância", abaixo. Começar com:
+   - `--concurrency 2` e memória de 1 GiB;
+   - se `--concurrency` for maior que 2, memória de 2 GiB;
    - `--max-instances` baixo, ajustado ao orçamento.
 6. **Sem segredos.** O fetcher não usa chave de API nem Secret Manager. As variáveis de ambiente são só `PORT`, `FETCHER_AUDIENCE` e `API_SERVICE_ACCOUNT_EMAIL`, e nenhuma delas relaxa proteção.
 
@@ -120,13 +120,16 @@ Os testes usam resolvedor e transporte injetados. A única "política de teste" 
 | HTML (redirecionamentos + corpo) | 10 s | O "cerca de 10 s" da arquitetura. |
 | Cada mídia (redirecionamentos + corpo) | 20 s | 15 MiB precisam de banda razoável; 20 s dá cerca de 6 Mbit/s. |
 | Página inteira (HTML + mídias) | 30 s | Cabe no fluxo SSE da API; mídias pendentes viram `timeout`, e o resto do relatório segue. |
-| HTML descompactado | 2 MiB | Páginas de notícia raramente passam disso; limita a memória do parse5. |
+| HTML descompactado | 2 MiB | Páginas de notícia raramente passam disso. **Não limita a memória do parse5:** uma página hostil de cerca de 55 KB gera milhões de nós. Quem limita é o heap do worker de extração. |
 | Cada mídia descompactada | 15 MiB | Cobre fotos de câmera e celular em alta resolução e clipes curtos; bem abaixo dos 100 MB da ExifTools. O limite da Cloud Vision ainda deve ser conferido na documentação oficial antes da Fase 5. Vídeos maiores viram `too_large` e entram no relatório como limitação. |
 | Mídia agregada por página | 60 MiB | 20 × 15 MiB daria 300 MiB por requisição; o teto agregado mantém a instância em 1 GiB com concorrência baixa. |
 | Mídias baixadas por página | 20 | Custo e tempo; as mais relevantes (og:image) vêm primeiro. |
 | Downloads simultâneos | 4 | Equilibra tempo total e pressão sobre o site de origem. |
 | Referências listadas | 200 | Evita resposta gigante em páginas com milhares de imagens. |
-| Nós HTML percorridos | 100 000 | Teto de CPU da varredura; a varredura é iterativa, sem recursão. |
+| Nós HTML percorridos | 100 000 | Teto de CPU da varredura, que é iterativa e sem recursão. Atua depois do parse e **não limita o parse em si**: a memória e a CPU do parse5 são limitadas pelo worker. |
+| Extração (worker): prazo | 2,5 s | Inclui subir o worker. Ver "Extração isolada em worker". |
+| Extração (worker): heap | 128 MiB (old) + 32 MiB (young) | Página legítima de 2 MiB usa cerca de 90 MiB de RSS; estourar vira `too_large`. |
+| Extrações simultâneas | 2 | Fila compartilhada pela instância; quem espera desiste pelo prazo da página. |
 | Redirecionamentos | 5 | Definido na arquitetura. |
 | Cabeçalhos de resposta | 16 KiB | Padrão do Node; cabeçalhos maiores são anormais. |
 | URL | 2048 caracteres | Limite prático de navegadores e CDNs. |
@@ -148,6 +151,42 @@ Usa parse5 (WHATWG, o mesmo algoritmo dos navegadores) sem executar script e sem
 - **Fora da varredura:** conteúdo de `<template>`, `<script>`, comentários, atributos e `<noscript>` (que o parse5 trata como texto).
 - **Charset:** vem do cabeçalho `Content-Type`. Se for desconhecido ou estiver ausente, usa UTF-8. Não há detecção por `<meta charset>`.
 
+### Extração isolada em worker
+
+A revisão de segurança da Fase 3 mostrou que o parse5, por montar a árvore inteira, tem dois casos patológicos com HTML pequeno: explosão de memória na reconstrução de elementos de formatação (cerca de 73 KB derrubavam o processo por falta de heap) e CPU quadrática com tags de fechamento órfãs (2 MiB passariam de 3 minutos de CPU síncrona, com o event loop parado). Por isso o parse e a extração rodam fora do event loop principal (`extract-pool.ts` e `extract-worker.ts`):
+
+- **Um worker novo por extração**, encerrado com `terminate()` em `finally`: no sucesso, no erro, no prazo e quando quem chamou cancela a requisição. Nenhum estado passa de uma requisição para outra.
+- **Entrada e saída:** o worker recebe só o HTML decodificado, a URL base e três limites numéricos (`maxMediaRefs`, `maxUrlLength` e `maxHtmlNodes`), e devolve dados simples (título, manchete e referências). Roda com `execArgv: []` e `env: {}`. Um teste percorre o grafo de imports do worker, incluindo parse5 e entities, e exige que o único módulo nativo seja `node:worker_threads` (nada de rede, disco ou processo).
+- **Limites:** `resourceLimits` com 128 MiB de old generation e 32 MiB de young. O estouro chega como `ERR_WORKER_OUT_OF_MEMORY` e vira `too_large`; o prazo de 2,5 s (ou o cancelamento) vira `timeout`; qualquer outra falha vira `network`.
+- **Concorrência:** no máximo 2 workers por instância, com fila. O prazo conta a partir da vaga; a espera na fila é limitada pelo prazo da página (30 s).
+- **Inicialização:** `main.ts` faz uma extração mínima antes de escutar a porta. Se o arquivo do worker não estiver na imagem, o processo sai com erro em vez de falhar em toda requisição. Um teste sobe `node src/main.ts` (o mesmo comando do Dockerfile) e outro confere que o `.dockerignore` não remove nenhum módulo de produção.
+
+**Medições que definiram o prazo** (máquina de desenvolvimento com Windows, Node 24.22.1; página legítima sintética de 2,1 MiB com CSS e script inline e 200 referências, gerada por `legitNewsPage` em `testing.ts`):
+
+| Cenário | Extração (inclui subir o worker) |
+| --- | --- |
+| 12 núcleos | cerca de 190 a 290 ms |
+| Processo preso a 1 núcleo (`start /affinity 1`) | 370 a 420 ms |
+| 1 núcleo, duas extrações em paralelo | cerca de 750 ms no total |
+
+O prazo de 2,5 s dá cerca de 3 vezes o pior caso medido, com margem para uma vCPU do Cloud Run mais lenta que o núcleo de desenvolvimento. Ele não é maior porque **workers presos em CPU competem com o processo principal em instâncias de 1 vCPU**: com o processo preso a 1 núcleo, durante o ataque de CPU quadrática, o atraso de um timer do event loop principal chegou a cerca de 0,7 s e `/healthz` levou cerca de 0,7 s (com 12 núcleos, cerca de 15 ms). Um prazo maior prolongaria essa degradação para todas as requisições da instância. O teste `extract-pool.test.ts` imprime o tempo medido a cada execução.
+
+**Melhoria possível: extração em nível de token.** O parse5 exporta `Tokenizer`, então daria para coletar as tags de interesse direto do fluxo de tokens, sem montar árvore.
+- Prós: custo linear no tamanho da entrada, por construção; elimina a causa raiz dos dois casos patológicos, em vez de conter o efeito; não precisa de worker (menos memória por instância e sem o custo de subir uma thread).
+- Contras: é preciso reimplementar à mão parte do que a árvore dá de graça (troca de estado do tokenizador para RCDATA, RAWTEXT, script e plaintext; profundidade de `picture`, `video` e `template`; `noscript`; o texto do `<title>` e do primeiro `<h1>`), com risco de divergir do que o navegador vê em HTML malformado; o comportamento já testado em `extract.test.ts` precisa ser mantido; a manutenção fica maior. Mesmo com essa mudança, o worker continuaria valendo como defesa em profundidade contra patologias futuras.
+
+### Orçamento de memória por instância
+
+| Parcela | Tamanho | Origem |
+| --- | --- | --- |
+| Processo principal em repouso | cerca de 90 MiB | medido (RSS com o grafo de módulos de `main.ts`) |
+| Workers de extração | até cerca de 2 × 150 MiB | medido: um worker no limite somou 152 MiB de RSS; dois em paralelo, 290 MiB |
+| HTML de cada requisição | cerca de 6 MiB | estimado: 2 MiB de bytes mais a string decodificada (até 2 bytes por caractere) |
+| Mídias de cada requisição | até 60 MiB | teto agregado |
+| Serialização de cada requisição | até cerca de 60 MiB, temporário | estimado: para uma mídia de 15 MiB, a string base64 (20 MiB), a linha JSON (20 MiB) e o buffer de escrita (20 MiB) |
+
+Pior caso: 90 + 300 + C × 126 MiB, em que C é o `--concurrency` do Cloud Run. Com C = 2, cerca de 650 MiB, o que cabe em 1 GiB com folga para GC e buffers nativos. Com C = 4, cerca de 900 MiB, o que não cabe com segurança em 1 GiB. **Recomendação: 1 GiB com `--concurrency 2`; 2 GiB se a concorrência for maior que 2.** As parcelas estimadas ainda precisam ser confirmadas no Cloud Run.
+
 ## Decisões abertas (sem implementação nesta fase)
 
 - **Mídia dentro de `<noscript>`:** sites com lazy-load colocam a imagem real ali. Extrair exigiria parsear o conteúdo do noscript como fragmento.
@@ -167,3 +206,5 @@ Todos os testes usam DNS e transporte simulados, ou um servidor HTTP local em 12
 - HTTPS de ponta a ponta: SNI e verificação de certificado usam o hostname, mas não há teste com certificado TLS real.
 - IPv6 real (só a política foi testada) e DNS real (`dns.lookup` do sistema).
 - Comportamento no Cloud Run: streaming NDJSON grande, memória por instância, ID token real da conta de serviço e alcance do servidor de metadados.
+- Workers de extração em 1 vCPU real: a disputa de CPU só foi simulada prendendo o processo a um núcleo no Windows.
+- Imagem Docker: não foi construída na máquina de desenvolvimento (sem Docker). O `.dockerignore` e o comando de produção têm teste, mas a imagem só é construída no CI.

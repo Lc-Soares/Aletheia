@@ -69,6 +69,39 @@ export function redirect(location: string, status = 302): FakeResponse {
   return { status, headers: { location } };
 }
 
+// Páginas hostis da revisão de segurança da Fase 3.
+// Achado 1: <b> com atributos distintos escapam do "Noah's Ark" e são clonados a cada <p>x</p>.
+export function formattingBomb(count: number): string {
+  let page = "<p>";
+  for (let i = 0; i < count; i++) page += `<b id=${i}>`;
+  return `${page}</p>${"<p>x</p>".repeat(count)}`;
+}
+
+// Achado 2: cada </i> órfão percorre a pilha inteira de <span> abertos (O(n²) sem criar nós).
+export const orphanEndTags = (count: number): string => "<span>".repeat(count) + "</i>".repeat(count);
+
+// Achado 3: srcset terminado em vírgulas (ReDoS em /,+$/, corrigido no parseSrcset).
+export function srcsetCommas(): string {
+  const tag = `<img srcset="a${",".repeat(16_000)}x,">`;
+  return tag.repeat(Math.floor((2 * 1024 * 1024) / tag.length));
+}
+
+// Página de notícia legítima e grande: head com CSS e script inline, cartões com picture/srcset.
+export function legitNewsPage(targetBytes: number): string {
+  const head = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Notícia</title>
+<meta property="og:title" content="Manchete"><meta property="og:image" content="https://cdn.example/capa.jpg">
+<style>${".card{color:#333;margin:0 auto;padding:4px}\n".repeat(2000)}</style>
+<script>${"window.dataLayer=window.dataLayer||[];dataLayer.push({event:'view',id:1});\n".repeat(3000)}</script></head><body><h1>Manchete</h1>`;
+  const paragraph = (i: number) =>
+    `<p>Texto do parágrafo com <strong>destaque</strong>, <em>ênfase</em> e um <a href="/link/${i}">link</a>. Mais texto corrido para encher a linha.</p>\n`;
+  const card = (i: number) => `<article class="card"><div class="meta"><a href="/secao/${i}">Seção</a> <time datetime="2026-10-23">23/10</time></div>
+<h2><a href="/materia/${i}">Título da matéria ${i}</a></h2><figure><picture><source srcset="/img/${i}.avif 1x, /img/${i}@2x.avif 2x" type="image/avif"><img src="/img/${i}.jpg" srcset="/img/${i}-640.jpg 640w, /img/${i}-1280.jpg 1280w" alt="Foto ${i}" loading="lazy"></picture><figcaption>Legenda ${i}</figcaption></figure>
+${paragraph(i).repeat(4)}</article>\n`;
+  let body = "";
+  for (let i = 0; head.length + body.length < targetBytes; i++) body += card(i);
+  return `${head}<main>${body}</main></body></html>`;
+}
+
 export type LocalServer = { server: Server; port: number; requests: IncomingMessage[]; connections: Socket[]; close: () => Promise<void> };
 
 export async function startLocalServer(handler: (req: IncomingMessage, res: ServerResponse) => void): Promise<LocalServer> {

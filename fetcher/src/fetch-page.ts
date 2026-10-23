@@ -2,12 +2,16 @@ import { createHash } from "node:crypto";
 
 import type { ByteBudget } from "./body.ts";
 import { FetchError, type FetchErrorCategory, toFetchError } from "./errors.ts";
-import { extractPage, type MediaRef } from "./extract.ts";
+import type { Extractor } from "./extract-pool.ts";
+import type { MediaRef } from "./extract.ts";
 import { type FetcherDeps, safeFetch } from "./safe-fetch.ts";
 
 export type MediaDownload =
   | (MediaRef & { ok: true; contentType: string; size: number; sha256: string; bytes: Buffer })
   | (MediaRef & { ok: false; error: FetchErrorCategory });
+
+// O extrator é injetado: em produção, o pool de workers criado uma vez em main.ts.
+export type PageDeps = FetcherDeps & { extract: Extractor };
 
 export type PageResult = {
   finalUrl: string;
@@ -54,7 +58,7 @@ async function downloadAll(refs: MediaRef[], deps: FetcherDeps, signal: AbortSig
 
 // Baixa a página e até N mídias, tudo em memória. Falha da página lança FetchError;
 // falha de uma mídia vira um item com a categoria do erro.
-export async function fetchPage(rawUrl: string, deps: FetcherDeps, signal?: AbortSignal): Promise<PageResult> {
+export async function fetchPage(rawUrl: string, deps: PageDeps, signal?: AbortSignal): Promise<PageResult> {
   const controller = new AbortController();
   const pageSignal = AbortSignal.any([
     controller.signal,
@@ -63,7 +67,7 @@ export async function fetchPage(rawUrl: string, deps: FetcherDeps, signal?: Abor
   ]);
   try {
     const page = await safeFetch(rawUrl, "html", deps, { signal: pageSignal });
-    const extracted = extractPage(decodeHtml(page.body, page.charset), page.finalUrl, deps.limits);
+    const extracted = await deps.extract(decodeHtml(page.body, page.charset), page.finalUrl, pageSignal);
     const downloads = await downloadAll(extracted.media.slice(0, deps.limits.maxMediaDownloads), deps, pageSignal);
     return { finalUrl: page.finalUrl, title: extracted.title, headline: extracted.headline, media: extracted.media, downloads };
   } catch (error) {

@@ -6,6 +6,7 @@ import { after, before, describe, test } from "node:test";
 
 import type { CallerVerifier } from "./auth.ts";
 import { FetchError } from "./errors.ts";
+import { createWorkerExtractor } from "./extract-pool.ts";
 import { fetchPage } from "./fetch-page.ts";
 import { isPublicAddress } from "./ip-policy.ts";
 import { resolveLimits } from "./limits.ts";
@@ -31,6 +32,7 @@ const realFetcher: PageFetcher = (url, signal) =>
     transport,
     policy: isPublicAddress,
     limits: resolveLimits(),
+    extract: createWorkerExtractor(resolveLimits()),
   }, signal);
 
 type Started = { base: string; logs: LogEntry[]; close: () => Promise<void> };

@@ -14,6 +14,9 @@ export type Limits = {
   maxResponseHeaderBytes: number;
   maxUrlLength: number;
   maxHtmlNodes: number;
+  extractTotalMs: number;
+  extractHeapMb: number;
+  extractConcurrency: number;
 };
 
 const MIB = 1024 * 1024;
@@ -33,6 +36,9 @@ export const DEFAULT_LIMITS: Readonly<Limits> = Object.freeze({
   maxResponseHeaderBytes: 16 * 1024,
   maxUrlLength: 2048,
   maxHtmlNodes: 100_000,
+  extractTotalMs: 2_500,
+  extractHeapMb: 128,
+  extractConcurrency: 2,
 });
 
 // Só deixa reduzir: qualquer valor acima do padrão, inválido ou ausente vira o padrão.

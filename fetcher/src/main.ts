@@ -1,10 +1,10 @@
 import { createCallerVerifier } from "./auth.ts";
 import { type Config, loadConfig } from "./config.ts";
-import { fetchPage } from "./fetch-page.ts";
+import { createWorkerExtractor, type Extractor } from "./extract-pool.ts";
+import { fetchPage, type PageDeps } from "./fetch-page.ts";
 import { isPublicAddress } from "./ip-policy.ts";
 import { DEFAULT_LIMITS } from "./limits.ts";
 import { systemResolver } from "./resolve.ts";
-import type { FetcherDeps } from "./safe-fetch.ts";
 import { createFetcherServer, shutdown } from "./server.ts";
 import { createNodeTransport } from "./transport.ts";
 
@@ -19,15 +19,30 @@ function loadConfigOrExit(): Config {
   }
 }
 
+// Uma extração mínima antes de aceitar tráfego: se o worker não subir (por exemplo, arquivo fora
+// da imagem), o processo sai na inicialização em vez de falhar em toda requisição.
+async function checkExtractorOrExit(extract: Extractor): Promise<void> {
+  try {
+    const page = await extract("<title>ok</title>", "https://aletheia.invalid/", AbortSignal.timeout(10_000));
+    if (page.title !== "ok") throw new Error("resultado inesperado");
+  } catch {
+    console.error("Worker de extração não iniciou");
+    process.exit(1);
+  }
+}
+
 const config = loadConfigOrExit();
 
 // Produção usa sempre a política pública e os limites padrão; não há chave para mudá-los.
-const deps: FetcherDeps = {
+const limits = { ...DEFAULT_LIMITS };
+const deps: PageDeps = {
   resolver: systemResolver,
   transport: createNodeTransport(),
   policy: isPublicAddress,
-  limits: { ...DEFAULT_LIMITS },
+  limits,
+  extract: createWorkerExtractor(limits),
 };
+await checkExtractorOrExit(deps.extract);
 
 const server = createFetcherServer({
   verifier: createCallerVerifier(config.audience, config.callerEmail),
