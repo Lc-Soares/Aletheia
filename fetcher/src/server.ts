@@ -103,13 +103,14 @@ async function readJsonUrl(req: IncomingMessage): Promise<string> {
 }
 
 function mediaLine(download: MediaDownload): Record<string, unknown> {
-  const { url, kind, source } = download;
+  const { url, kind, source, group } = download;
   if (!download.ok) {
     const { error, httpStatus } = download;
-    return httpStatus === undefined ? { type: "media_error", url, kind, source, error } : { type: "media_error", url, kind, source, error, httpStatus };
+    const line = { type: "media_error", url, kind, source, group, error };
+    return httpStatus === undefined ? line : { ...line, httpStatus };
   }
   const { contentType, size, sha256, bytes } = download;
-  return { type: "media", url, kind, source, contentType, size, sha256, data: bytes.toString("base64") };
+  return { type: "media", url, kind, source, group, contentType, size, sha256, data: bytes.toString("base64") };
 }
 
 // Respostas que o PRÓPRIO fetcher destruiu. A categoria é registrada antes do destroy(), então o
@@ -159,8 +160,8 @@ async function streamResult(
   const signals: StreamSignals = { request, total: AbortSignal.timeout(limits.streamTotalMs), idleMs: limits.streamIdleMs };
   res.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", ...SECURITY_HEADERS });
   try {
-    const { finalUrl, title, headline, media } = result;
-    await writeLine(res, { type: "page", finalUrl, title, headline, media }, signals);
+    const { finalUrl, title, headline, media, possiblyNeedsJavaScript } = result;
+    await writeLine(res, { type: "page", finalUrl, title, headline, possiblyNeedsJavaScript, media }, signals);
     for (const download of result.downloads) await writeLine(res, mediaLine(download), signals);
     await writeLine(res, { type: "done" }, signals);
     res.end();

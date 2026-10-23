@@ -18,6 +18,7 @@ export type PageResult = {
   title: string | null;
   headline: string | null;
   media: MediaRef[];
+  possiblyNeedsJavaScript: boolean;
   downloads: MediaDownload[];
 };
 
@@ -57,7 +58,16 @@ async function downloadAll(refs: MediaRef[], deps: FetcherDeps, signal: AbortSig
   return results;
 }
 
-// Baixa a página e até N mídias, tudo em memória. Falha da página lança FetchError;
+// Só os selecionados pelo worker, em ordem de grupo (1 = melhor). O validador já garantiu no
+// máximo maxSelectedMedia; o slice é defesa em profundidade.
+function selectedRefs(media: MediaRef[], maxSelected: number): MediaRef[] {
+  return media
+    .filter((ref) => ref.selected)
+    .sort((a, b) => a.group - b.group)
+    .slice(0, maxSelected);
+}
+
+// Baixa a página e as mídias selecionadas, tudo em memória. Falha da página lança FetchError;
 // falha de uma mídia vira um item com a categoria do erro.
 export async function fetchPage(rawUrl: string, deps: PageDeps, signal?: AbortSignal): Promise<PageResult> {
   const controller = new AbortController();
@@ -69,8 +79,9 @@ export async function fetchPage(rawUrl: string, deps: PageDeps, signal?: AbortSi
   try {
     const page = await safeFetch(rawUrl, "html", deps, { signal: pageSignal });
     const extracted = await deps.extract(decodeHtml(page.body, page.charset), page.finalUrl, pageSignal);
-    const downloads = await downloadAll(extracted.media.slice(0, deps.limits.maxMediaDownloads), deps, pageSignal);
-    return { finalUrl: page.finalUrl, title: extracted.title, headline: extracted.headline, media: extracted.media, downloads };
+    const downloads = await downloadAll(selectedRefs(extracted.media, deps.limits.maxSelectedMedia), deps, pageSignal);
+    const { title, headline, media, possiblyNeedsJavaScript } = extracted;
+    return { finalUrl: page.finalUrl, title, headline, media, possiblyNeedsJavaScript, downloads };
   } catch (error) {
     if (error instanceof OverloadedError) throw error; // vira 503 no serviço
     throw toFetchError(error, pageSignal);
