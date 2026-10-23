@@ -1,0 +1,9 @@
+**/node_modules
+.git
+.github
+.claude
+docs
+**/*.test.ts
+**/testing.ts
+**/.env*
+!**/.env.example

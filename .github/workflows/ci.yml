@@ -35,3 +35,14 @@ jobs:
 
       - name: Auditoria de dependências
         run: npm audit --audit-level=high
+
+  docker-api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build da imagem da API (sem push)
+        run: docker build -f api/Dockerfile -t aletheia-api:ci .
