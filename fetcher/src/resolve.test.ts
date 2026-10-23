@@ -256,3 +256,38 @@ describe("c-ares real contra servidor DNS local", () => {
     });
   });
 });
+
+// Um resolvedor c-ares por consulta: se o canal não fechar o socket UDP ao terminar ou ao ser
+// cancelado, os descritores crescem com a carga. /proc/self/fd só existe no Linux (o CI).
+describe("c-ares não vaza descritores (só Linux)", { skip: process.platform !== "linux" && "usa /proc/self/fd" }, () => {
+  const openDescriptors = async (): Promise<number> => {
+    const { readdirSync } = await import("node:fs");
+    await new Promise((resolve) => setTimeout(resolve, 200)); // deixa o c-ares fechar o que for fechar
+    return readdirSync("/proc/self/fd").length;
+  };
+
+  test("300 resoluções respondidas não deixam sockets abertos", { timeout: 60_000 }, async (t) => {
+    await withDns({ "site.example": { A: ["93.184.216.34"] } }, async (dns) => {
+      const resolver = aresAt(dns.server);
+      await resolver("site.example"); // aquece o que o Node inicializa uma vez só
+      const before = await openDescriptors();
+      for (let i = 0; i < 300; i++) await resolver("site.example");
+      const after = await openDescriptors();
+      t.diagnostic(`descritores: ${before} antes, ${after} depois`);
+      assert.ok(after - before <= 5, `antes ${before}, depois ${after}`);
+    });
+  });
+
+  test("100 resoluções canceladas pelo prazo do salto não deixam sockets abertos", { timeout: 60_000 }, async (t) => {
+    await withDns("mudo", async (dns) => {
+      const resolver = aresAt(dns.server);
+      const target = parseTargetUrl("https://mudo.example/");
+      await assertRejects(resolveTarget(target, resolver, isPublicAddress, never, 20), "timeout");
+      const before = await openDescriptors();
+      for (let i = 0; i < 100; i++) await assertRejects(resolveTarget(target, resolver, isPublicAddress, never, 20), "timeout");
+      const after = await openDescriptors();
+      t.diagnostic(`descritores: ${before} antes, ${after} depois`);
+      assert.ok(after - before <= 5, `antes ${before}, depois ${after}`);
+    });
+  });
+});
