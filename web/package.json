@@ -6,6 +6,6 @@
   "scripts": {
     "dev": "node dev-proxy.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --import ../test-support/fail-on-unhandled-rejection.js --test \"test/**/*.test.js\""
   }
 }
