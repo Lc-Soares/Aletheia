@@ -82,7 +82,10 @@ export function parseSrcset(value: string): string[] {
     while (pos < input.length && !isSpace(input[pos])) pos++;
     let url = input.slice(start, pos);
     if (url.endsWith(",")) {
-      url = url.replace(/,+$/, "");
+      // Laço em vez de /,+$/: a regex volta atrás em cada vírgula e fica quadrática (ReDoS).
+      let end = url.length;
+      while (end > 0 && url[end - 1] === ",") end--;
+      url = url.slice(0, end);
     } else {
       let inParens = false;
       for (; pos < input.length; pos++) {

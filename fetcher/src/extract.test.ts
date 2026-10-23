@@ -194,4 +194,14 @@ describe("extractPage: HTML hostil", () => {
   test("entrada vazia", () => {
     assert.deepEqual(extractPage("", PAGE), { title: null, headline: null, media: [] });
   });
+
+  test("srcset terminado em vírgulas: tempo linear, sem ReDoS", () => {
+    assert.deepEqual(parseSrcset(`a${",".repeat(100)}x,`), [`a${",".repeat(100)}x`]);
+    // Antes da correção, /,+$/ levava cerca de 19 s nesta página de 2 MiB.
+    const tag = `<img srcset="a${",".repeat(16_000)}x,">`;
+    const htmlText = tag.repeat(Math.floor((2 * 1024 * 1024) / tag.length));
+    const started = performance.now();
+    extractPage(htmlText, PAGE);
+    assert.ok(performance.now() - started < 3_000);
+  });
 });
