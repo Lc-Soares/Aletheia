@@ -39,6 +39,50 @@ Toda chamada a `POST /fetch` exige um ID token do Google emitido para essa conta
 
 O fetcher acessa a internet de verdade quando roda localmente. Ele bloqueia destinos internos (inclusive `localhost`), então não serve para testar páginas da sua própria máquina.
 
+### Testar páginas reais: `try-fetch`
+
+Script de desenvolvimento (`fetcher/scripts/try-fetch.ts`) que roda o `fetchPage` contra páginas reais, **com as mesmas dependências de produção** (`createProductionDeps()`): DNS real, política de IP pública, transporte fixado no IP, extrator em worker e todos os limites padrão. Não há opção, flag nem variável de ambiente que desligue ou relaxe proteção. Ele não sobe o servidor e não precisa de token.
+
+```
+npm run try-fetch -w fetcher -- https://example.com/
+npm run try-fetch -w fetcher -- --arquivo scripts/lista-exemplo.txt
+```
+
+O caminho de `--arquivo` é relativo a `fetcher/`. O arquivo tem uma URL por linha, e linhas vazias ou começadas por `#` são ignoradas.
+
+> **Aviso:** o script faz **requisições reais a partir da máquina de quem roda** (o IP, a rede e o DNS são os seus). Use só com **páginas públicas**. O resultado pode variar com a rede, o DNS, CDNs, bloqueio de User-Agent e desafios anti-bot, e não reproduz o Cloud Run.
+
+Saída, em texto: URL final, título, manchete, quantas mídias foram listadas, tentadas e baixadas; para cada mídia, o content-type, o tamanho e os 12 primeiros caracteres do SHA-256, ou a categoria do erro; e tempos por fase (página, extração, mídias) e total. Com `--arquivo`, as URLs rodam uma de cada vez e há um resumo no fim (quantas deram certo e quantas vezes cada categoria de erro apareceu, na página e nas mídias). Exemplo real:
+
+```
+URL: https://example.com/
+  URL final: https://example.com/
+  título: Example Domain
+  manchete: (nenhum)
+  mídias: 0 listadas, 0 tentadas, 0 baixadas
+  tempos: página 118 ms · extração 64 ms · mídias 0 ms · total 182 ms
+```
+
+Garantias, todas com teste em `fetcher/scripts/try-fetch.test.ts`:
+- nunca imprime os bytes das mídias;
+- não grava nada em disco nem em log; só lê o arquivo de `--arquivo`;
+- título, manchete, URLs e content-types vêm de terceiros e são higienizados antes de ir para o terminal (sem sequências ANSI, sem controles C0/C1 e sem caracteres de formato Unicode, como o U+202E, que inverte o texto);
+- termina sozinho depois do resumo, sem deixar worker nem resolvedor abertos;
+- fica fora da imagem Docker (`.dockerignore` remove `fetcher/scripts`), e nenhum módulo de produção o importa.
+
+Requer **Node 24.2 ou superior**, por causa de `import.meta.main`. Código de saída: 0 quando rodou, mesmo que alguma página tenha falhado (a falha aparece no resultado); 2 para uso errado.
+
+**`scripts/lista-exemplo.txt`** traz quatro URLs que **precisam** sair `blocked`, sem abrir nenhuma conexão. Serve para conferir as proteções na sua máquina:
+
+| URL | Resultado esperado | Por quê |
+| --- | --- | --- |
+| `http://localhost/` | `blocked` | Nome bloqueado pela política de URL (`localhost` e nomes sem ponto), antes de qualquer DNS. |
+| `http://127.0.0.1/` | `blocked` | IP literal de loopback IPv4 (127/8); o DNS nem é consultado. |
+| `http://169.254.169.254/` | `blocked` | Servidor de metadados do Google Cloud (link-local 169.254/16). |
+| `http://[::1]/` | `blocked` | Loopback IPv6, fora da lista de permissão 2000::/3. |
+
+Se qualquer uma delas sair diferente de `blocked`, é regressão de segurança: pare e investigue.
+
 ## Origens a autorizar no cliente OAuth (Google Cloud Console)
 
 Em "Origens JavaScript autorizadas", adicione (a documentação do GIS pede as duas para desenvolvimento local):

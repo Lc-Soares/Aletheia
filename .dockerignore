@@ -7,3 +7,6 @@ docs
 **/testing.ts
 **/.env*
 !**/.env.example
+
+# Script de desenvolvimento (fetcher/scripts/try-fetch.ts): fora da imagem
+fetcher/scripts

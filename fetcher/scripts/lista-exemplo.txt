@@ -1,0 +1,6 @@
+# Lista de exemplo para npm run try-fetch -w fetcher -- --arquivo scripts/lista-exemplo.txt
+# Todas devem sair "blocked", sem abrir nenhuma conexão (ver docs/desenvolvimento-local.md).
+http://localhost/
+http://127.0.0.1/
+http://169.254.169.254/
+http://[::1]/

@@ -30,8 +30,9 @@ describe("guarda global de unhandled rejection", () => {
   test("os scripts de teste de todos os workspaces usam o runner, e a raiz não pula workspace", () => {
     const testScript = (path: string): string =>
       (JSON.parse(readFileSync(new URL(path, import.meta.url), "utf8")) as { scripts: { test: string } }).scripts.test;
-    for (const { name, glob } of WORKSPACES) {
-      assert.equal(testScript(`../../${name}/package.json`), `node ../test-support/run-tests.js "${glob}"`, name);
+    for (const { name, globs } of WORKSPACES) {
+      const quoted = globs.map((glob) => `"${glob}"`).join(" ");
+      assert.equal(testScript(`../../${name}/package.json`), `node ../test-support/run-tests.js ${quoted}`, name);
     }
     const root = testScript("../../package.json");
     assert.equal(root, "npm run test --workspaces");
@@ -39,10 +40,12 @@ describe("guarda global de unhandled rejection", () => {
   });
 
   test("nenhum glob de workspace alcança test-support (fixtures ficam fora do npm run test)", () => {
-    for (const { name, glob } of WORKSPACES) {
-      const found = globSync(glob, { cwd: fileURLToPath(new URL(`../../${name}/`, import.meta.url)) });
-      assert.ok(found.length > 0, `${name}: o glob precisa achar os testes do próprio workspace`);
-      assert.deepEqual(found.filter((path) => path.includes("test-support")), [], name);
+    for (const { name, globs } of WORKSPACES) {
+      for (const glob of globs) {
+        const found = globSync(glob, { cwd: fileURLToPath(new URL(`../../${name}/`, import.meta.url)) });
+        assert.ok(found.length > 0, `${name} ${glob}: o glob precisa achar testes do próprio workspace`);
+        assert.deepEqual(found.filter((path) => path.includes("test-support")), [], name);
+      }
     }
   });
 });
@@ -52,9 +55,9 @@ describe("guarda global de unhandled rejection", () => {
 const RUNNER = fileURLToPath(new URL("../../test-support/run-tests.js", import.meta.url));
 const FIXTURES = fileURLToPath(new URL("../../test-support/fixtures/", import.meta.url));
 const WORKSPACES = [
-  { name: "api", glob: "src/**/*.test.ts" },
-  { name: "web", glob: "test/**/*.test.js" },
-  { name: "fetcher", glob: "src/**/*.test.ts" },
+  { name: "api", globs: ["src/**/*.test.ts"] },
+  { name: "web", globs: ["test/**/*.test.js"] },
+  { name: "fetcher", globs: ["src/**/*.test.ts", "scripts/**/*.test.ts"] }, // scripts/: try-fetch (dev)
 ];
 
 function runRunner(globs: string | string[], extraEnv: Record<string, string> = {}) {
