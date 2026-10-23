@@ -6,9 +6,9 @@
 // encontrados, também reprova.
 import { spawn } from "node:child_process";
 import { relative } from "node:path";
-import { stripVTControlCharacters } from "node:util";
 
 import { COUNT_PREFIX } from "./count-reporter.js";
+import { specSummary, verdict } from "./verdict.js";
 
 const GUARD = new URL("./fail-on-unhandled-rejection.js", import.meta.url);
 const COUNTER = new URL("./count-reporter.js", import.meta.url);
@@ -40,38 +40,16 @@ child.stderr.on("data", (chunk) => {
   for (const line of lines) handleStderrLine(line.replace(/\r$/, ""));
 });
 
-// Último valor de "ℹ <nome> <n>" no resumo do spec, depois de tirar as cores (FORCE_COLOR no CI).
-function summaryCount(lines, name) {
-  const pattern = new RegExp(`^ℹ ${name} (\\d+)$`);
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const match = pattern.exec(lines[i] ?? "");
-    if (match) return Number(match[1]);
-  }
-  return null;
-}
-
-function nothingRan() {
-  const lines = stripVTControlCharacters(Buffer.concat(stdoutChunks).toString("utf8"))
-    .split(/\r?\n/)
-    .map((line) => line.trim());
-  const tests = summaryCount(lines, "tests");
-  const pass = summaryCount(lines, "pass");
-  if (tests === null || pass === null || tests === 0 || pass < 1) return true;
-  return count === null || count.real === 0 || count.passed < 1;
-}
-
 child.on("close", (code, signal) => {
   if (pending !== "") handleStderrLine(pending);
   if (signal !== null || code !== 0) {
     process.exitCode = code === null || code === 0 ? 1 : code;
     return;
   }
-  if (nothingRan()) {
-    console.error(`Nenhum teste executado: ${globs.join(" ")}`);
-    process.exitCode = 1;
-  } else if (count.emptyFiles.length > 0) {
-    for (const file of count.emptyFiles) console.error(`Arquivo de teste sem nenhum teste: ${relative(process.cwd(), file)}`);
-    console.error(`Nenhum teste executado em ${count.emptyFiles.length} arquivo(s): ${globs.join(" ")}`);
-    process.exitCode = 1;
-  }
+  const result = verdict(specSummary(Buffer.concat(stdoutChunks).toString("utf8")), count);
+  if (result.ok) return;
+  for (const file of result.emptyFiles) console.error(`Arquivo de teste sem nenhum teste: ${relative(process.cwd(), file)}`);
+  const where = result.emptyFiles.length > 0 ? ` em ${result.emptyFiles.length} arquivo(s)` : "";
+  console.error(`Nenhum teste executado${where}: ${globs.join(" ")}`);
+  process.exitCode = 1;
 });
