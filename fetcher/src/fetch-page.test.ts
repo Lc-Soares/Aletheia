@@ -9,7 +9,18 @@ import { createWorkerExtractor } from "./extract-pool.ts";
 import { type MediaDownload, fetchPage, type PageDeps } from "./fetch-page.ts";
 import { isPublicAddress } from "./ip-policy.ts";
 import { type Limits, resolveLimits } from "./limits.ts";
-import { type FakeResponse, fakeResolver, fakeTransport, html, image, redirect, routeTransport } from "./testing.ts";
+import {
+  collectUnhandledRejections,
+  type FakeResponse,
+  fakeResolver,
+  fakeTransport,
+  html,
+  image,
+  inlineExtractor,
+  redirect,
+  routeTransport,
+  slowWorker,
+} from "./testing.ts";
 import type { Transport } from "./transport.ts";
 
 const DNS = fakeResolver({
@@ -133,10 +144,29 @@ describe("fetchPage", () => {
     const transport = fakeTransport((req) =>
       req.url.pathname === "/" ? html(`<img src="/lenta.jpg">`) : new Promise<never>(() => {}),
     );
+    // Extrator imediato: com o worker, subir a thread pode passar dos 150 ms (aconteceu no CI) e o
+    // prazo esgotaria na extração, que é outro caso (teste seguinte).
+    const pageDeps = { ...deps(transport, { pageTotalMs: 150 }), extract: inlineExtractor() };
     const started = performance.now();
-    const result = await fetchPage("https://noticias.example/", deps(transport, { pageTotalMs: 150 }));
+    const result = await fetchPage("https://noticias.example/", pageDeps);
     assert.equal(failed(result.downloads[0]), "timeout");
     assert.ok(performance.now() - started < 2_000);
+  });
+
+  test("prazo da página esgota durante a extração: timeout, worker encerrado, sem rejeição solta", async () => {
+    const transport = routeTransport({ "https://noticias.example/": html("<title>x</title>") });
+    const limits = resolveLimits({ pageTotalMs: 150 });
+    const extract = createWorkerExtractor(limits, slowWorker(1_000)); // responde muito depois do prazo
+    const started = performance.now();
+    const seen = await collectUnhandledRejections(async () => {
+      await assert.rejects(
+        fetchPage("https://noticias.example/", { ...deps(transport), limits, extract }),
+        (error: unknown) => error instanceof FetchError && error.category === "timeout",
+      );
+    });
+    assert.ok(performance.now() - started < 1_000);
+    assert.deepEqual(seen, []);
+    assert.equal(extract.active, 0);
   });
 
   test("extrator sem vaga (OverloadedError) passa direto, sem virar categoria", async () => {

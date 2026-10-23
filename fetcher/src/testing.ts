@@ -8,7 +8,10 @@ import { Readable } from "node:stream";
 
 import { OAuth2Client } from "google-auth-library";
 
+import type { Extractor } from "./extract-pool.ts";
+import { type ExtractLimits, extractPage } from "./extract.ts";
 import { type AddressPolicy, isPublicAddress } from "./ip-policy.ts";
+import { DEFAULT_LIMITS } from "./limits.ts";
 import type { ResolvedAddress, Resolver } from "./resolve.ts";
 import type { ResponseHeaders, Transport, TransportRequest } from "./transport.ts";
 
@@ -68,6 +71,36 @@ export function image(bytes: Buffer | string, contentType = "image/jpeg"): FakeR
 
 export function redirect(location: string, status = 302): FakeResponse {
   return { status, headers: { location } };
+}
+
+// Roda `run` e devolve as unhandled rejections que aconteceram até o fim do macrotask seguinte.
+// Sob o node:test, uma rejeição dessas também reprova o teste (e o guarda global, a execução).
+export async function collectUnhandledRejections(run: () => Promise<void>): Promise<unknown[]> {
+  const seen: unknown[] = [];
+  const listener = (reason: unknown): void => {
+    seen.push(reason);
+  };
+  process.on("unhandledRejection", listener);
+  try {
+    await run();
+    await new Promise((resolve) => setTimeout(resolve, 20)); // a detecção roda depois das microtasks
+  } finally {
+    process.off("unhandledRejection", listener);
+  }
+  return seen;
+}
+
+// Extrator no próprio processo, sem worker. Para testes cujo assunto não é a extração e que não
+// podem depender do tempo de subir um worker (no CI, isso passou de 150 ms).
+export function inlineExtractor(limits: ExtractLimits = DEFAULT_LIMITS): Extractor {
+  return Object.assign(async (htmlText: string, pageUrl: string) => extractPage(htmlText, pageUrl, limits), { active: 0 });
+}
+
+// Worker de extração falso (URL data:) que responde uma página vazia depois de `delayMs`.
+export function slowWorker(delayMs: number): URL {
+  const code = `import { parentPort } from "node:worker_threads";
+    setTimeout(() => parentPort.postMessage({ title: null, headline: null, media: [] }), ${delayMs});`;
+  return new URL(`data:text/javascript,${encodeURIComponent(code)}`);
 }
 
 // Páginas hostis da revisão de segurança da Fase 3.
