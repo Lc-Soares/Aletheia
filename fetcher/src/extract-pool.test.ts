@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { builtinModules } from "node:module";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 
 import { FetchError, type FetchErrorCategory, OverloadedError } from "./errors.ts";
 import { createSemaphore, createWorkerExtractor } from "./extract-pool.ts";
@@ -208,5 +210,19 @@ describe("isolamento do worker", () => {
     assert.ok(files.some((f) => f.includes("/parse5/")), "o grafo deve incluir o parse5");
     assert.ok(files.some((f) => f.includes("/entities/")), "o grafo deve incluir o entities");
     assert.deepEqual([...builtins], ["node:worker_threads"]);
+  });
+
+  // Registra a limitação descrita em docs/fetcher.md: o isolamento é de memória e de CPU.
+  test("o worker NÃO é uma sandbox: fetch, process e import() dinâmico estão disponíveis", async () => {
+    const code = `import { parentPort } from "node:worker_threads";
+      const fs = await import("node:fs");
+      parentPort.postMessage({ fetch: typeof fetch, process: typeof process, dynamicImport: typeof fs.readFileSync });`;
+    const worker = new Worker(new URL(`data:text/javascript,${encodeURIComponent(code)}`), { execArgv: [], env: {} });
+    try {
+      const [message] = await once(worker, "message");
+      assert.deepEqual(message, { fetch: "function", process: "object", dynamicImport: "function" });
+    } finally {
+      await worker.terminate();
+    }
   });
 });
