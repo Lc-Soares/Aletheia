@@ -138,6 +138,14 @@ describe("extractPage: mídias", () => {
     );
   });
 
+  test("<noscript> não é extraído (decisão aberta em docs/fetcher.md)", () => {
+    assert.deepEqual(urls(`<head><noscript><img src="h.jpg"></noscript></head><noscript><img src="b.jpg"></noscript>`), []);
+  });
+
+  test("twitter:image não é extraído (decisão aberta em docs/fetcher.md)", () => {
+    assert.deepEqual(urls(`<meta name="twitter:image" content="https://cdn.example/t.jpg">`), []);
+  });
+
   test("limita a quantidade de referências", () => {
     const tags = Array.from({ length: 500 }, (_, i) => `<img src="/i${i}.jpg">`).join("");
     assert.equal(urls(tags).length, 200);
