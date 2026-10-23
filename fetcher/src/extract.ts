@@ -26,16 +26,32 @@ const MAX_SRCSET_CANDIDATES = 20;
 const OG_IMAGE = new Set(["og:image", "og:image:url", "og:image:secure_url"]);
 const OG_VIDEO = new Set(["og:video", "og:video:url", "og:video:secure_url"]);
 
+// Teto de valores brutos por lista (og e corpo), antes de resolver e deduplicar as URLs: sem ele,
+// 100 mil nós com srcset geram milhões de entradas e de new URL. A folga cobre inválidas e repetidas.
+const RAW_REFS_PER_MEDIA_REF = 4;
+
 type RawRef = { value: string; kind: MediaKind; source: MediaSource };
+type RefList = { refs: RawRef[]; seen: Set<string>; max: number };
 
 type Collected = {
   baseHref: string | null;
   title: string | null;
   ogTitle: string | null;
   h1: string | null;
-  og: RawRef[];
-  body: RawRef[];
+  og: RefList;
+  body: RefList;
 };
+
+const newRefList = (max: number): RefList => ({ refs: [], seen: new Set(), max });
+const isFull = (list: RefList): boolean => list.refs.length >= list.max;
+
+// Deduplica o valor bruto já na coleta: repetir o mesmo src não consome o teto.
+function pushRef(list: RefList, value: string, kind: MediaKind, source: MediaSource): void {
+  const key = value.trim();
+  if (isFull(list) || list.seen.has(key)) return;
+  list.seen.add(key);
+  list.refs.push({ value, kind, source });
+}
 
 function attr(element: Element, name: string): string | null {
   return element.attrs.find((a) => a.name === name)?.value ?? null;
@@ -108,8 +124,8 @@ function collectMeta(element: Element, found: Collected): void {
   const content = attr(element, "content");
   if (content === null) return;
   if (property === "og:title" && found.ogTitle === null) found.ogTitle = normalizeText(content);
-  else if (OG_IMAGE.has(property)) found.og.push({ value: content, kind: "image", source: "og:image" });
-  else if (OG_VIDEO.has(property)) found.og.push({ value: content, kind: "video", source: "og:video" });
+  else if (OG_IMAGE.has(property)) pushRef(found.og, content, "image", "og:image");
+  else if (OG_VIDEO.has(property)) pushRef(found.og, content, "video", "og:video");
 }
 
 function collectSource(element: Element, found: Collected): void {
@@ -117,10 +133,10 @@ function collectSource(element: Element, found: Collected): void {
   if (parentTag !== "picture" && parentTag !== "video") return; // <audio> e afins ficam de fora
   const kind: MediaKind = parentTag === "video" ? "video" : "image";
   const src = attr(element, "src");
-  if (src !== null) found.body.push({ value: src, kind, source: "source" });
+  if (src !== null) pushRef(found.body, src, kind, "source");
   const srcset = attr(element, "srcset");
-  if (srcset !== null) {
-    for (const value of parseSrcset(srcset)) found.body.push({ value, kind, source: "source-srcset" });
+  if (srcset !== null && !isFull(found.body)) {
+    for (const value of parseSrcset(srcset)) pushRef(found.body, value, kind, "source-srcset");
   }
 }
 
@@ -141,18 +157,18 @@ function collectElement(element: Element, found: Collected): void {
       return collectMeta(element, found);
     case "img": {
       const src = attr(element, "src");
-      if (src !== null) found.body.push({ value: src, kind: "image", source: "img" });
+      if (src !== null) pushRef(found.body, src, "image", "img");
       const srcset = attr(element, "srcset");
-      if (srcset !== null) {
-        for (const value of parseSrcset(srcset)) found.body.push({ value, kind: "image", source: "img-srcset" });
+      if (srcset !== null && !isFull(found.body)) {
+        for (const value of parseSrcset(srcset)) pushRef(found.body, value, "image", "img-srcset");
       }
       return;
     }
     case "video": {
       const src = attr(element, "src");
-      if (src !== null) found.body.push({ value: src, kind: "video", source: "video" });
+      if (src !== null) pushRef(found.body, src, "video", "video");
       const poster = attr(element, "poster");
-      if (poster !== null) found.body.push({ value: poster, kind: "image", source: "video-poster" });
+      if (poster !== null) pushRef(found.body, poster, "image", "video-poster");
       return;
     }
     case "source":
@@ -161,11 +177,19 @@ function collectElement(element: Element, found: Collected): void {
 }
 
 // Percorre a árvore com pilha explícita (sem recursão) e teto de nós.
-function walk(document: Node, maxNodes: number): Collected {
-  const found: Collected = { baseHref: null, title: null, ogTitle: null, h1: null, og: [], body: [] };
+function walk(document: Node, limits: ExtractLimits): Collected {
+  const maxRaw = limits.maxMediaRefs * RAW_REFS_PER_MEDIA_REF;
+  const found: Collected = {
+    baseHref: null,
+    title: null,
+    ogTitle: null,
+    h1: null,
+    og: newRefList(maxRaw),
+    body: newRefList(maxRaw),
+  };
   const stack: Node[] = [document];
   let visited = 0;
-  while (stack.length > 0 && visited < maxNodes) {
+  while (stack.length > 0 && visited < limits.maxHtmlNodes) {
     const node = stack.pop();
     if (node === undefined) break;
     visited++;
@@ -211,11 +235,11 @@ export function extractPage(
   pageUrl: string,
   limits: ExtractLimits = DEFAULT_LIMITS,
 ): ExtractedPage {
-  const found = walk(parse(htmlText), limits.maxHtmlNodes);
+  const found = walk(parse(htmlText), limits);
   const base = resolveBase(found.baseHref, pageUrl);
   const seen = new Set<string>();
   const media: MediaRef[] = [];
-  for (const ref of [...found.og, ...found.body]) {
+  for (const ref of [...found.og.refs, ...found.body.refs]) {
     if (media.length >= limits.maxMediaRefs) break;
     const url = resolveRef(ref.value, base, limits.maxUrlLength);
     if (url === null || seen.has(url)) continue;

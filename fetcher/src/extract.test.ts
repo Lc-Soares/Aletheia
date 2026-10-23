@@ -151,6 +151,32 @@ describe("extractPage: mídias", () => {
     assert.equal(urls(tags).length, 200);
   });
 
+  test("coleta bruta tem teto antes da deduplicação (4 × maxMediaRefs por lista)", () => {
+    // 8 valores brutos distintos que viram a mesma URL esgotam o teto (2 × 4); b.jpg fica de fora.
+    const variants = Array.from({ length: 8 }, (_, i) => `<img src="a.jpg#${i}">`).join("");
+    const page = extractPage(`${variants}<img src="b.jpg">`, PAGE, { maxMediaRefs: 2, maxUrlLength: 2048, maxHtmlNodes: 100_000 });
+    assert.deepEqual(page.media.map((m) => m.url), ["https://noticias.example/politica/a.jpg"]);
+  });
+
+  test("valor bruto repetido não consome o teto", () => {
+    const repeated = `<img src="a.jpg">`.repeat(100);
+    const page = extractPage(`${repeated}<img src="b.jpg">`, PAGE, { maxMediaRefs: 2, maxUrlLength: 2048, maxHtmlNodes: 100_000 });
+    assert.deepEqual(page.media.map((m) => m.url), [
+      "https://noticias.example/politica/a.jpg",
+      "https://noticias.example/politica/b.jpg",
+    ]);
+  });
+
+  test("teto do corpo não tira o lugar do og:image", () => {
+    const body = Array.from({ length: 50 }, (_, i) => `<img src="x${i}.jpg">`).join("");
+    const page = extractPage(`${body}<meta property="og:image" content="capa.jpg">`, PAGE, {
+      maxMediaRefs: 2,
+      maxUrlLength: 2048,
+      maxHtmlNodes: 100_000,
+    });
+    assert.deepEqual(page.media.map((m) => m.source), ["og:image", "img"]);
+  });
+
   test("ignora URL longa demais", () => {
     assert.deepEqual(urls(`<img src="/${"a".repeat(3000)}.jpg"><img src="ok.jpg">`), ["https://noticias.example/politica/ok.jpg"]);
   });

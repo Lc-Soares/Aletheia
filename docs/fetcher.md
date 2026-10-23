@@ -162,6 +162,7 @@ SVG fica de fora porque é XML e pode conter script.
 
 Usa parse5 (WHATWG, o mesmo algoritmo dos navegadores) sem executar script e sem buscar recurso nenhum.
 - **Coleta:** `meta property|name = og:image[:url|:secure_url]`, `og:video[...]` e `og:title`; `img[src|srcset]`; `source[src|srcset]` dentro de `picture`/`video`; `video[src|poster]`; `<title>`; o primeiro `<h1>`.
+- **Coleta com teto:** os valores brutos são deduplicados já na coleta e param em 4 × `maxMediaRefs` (800) por lista (og e corpo), antes de resolver as URLs. Sem esse teto, 100 mil nós com `srcset` gerariam milhões de entradas e de `new URL` (achado 7 da revisão). A folga cobre valores inválidos e variações que viram a mesma URL (por exemplo, fragmentos diferentes).
 - **Resolução:** honra o primeiro `<base href>` http(s); descarta `data:`, `javascript:`, `blob:` e outros esquemas; remove fragmento e duplicadas.
 - **Fora da varredura:** conteúdo de `<template>`, `<script>`, comentários, atributos e `<noscript>` (que o parse5 trata como texto).
 - **Charset:** vem do cabeçalho `Content-Type`. Se for desconhecido ou estiver ausente, usa UTF-8. Não há detecção por `<meta charset>`.
