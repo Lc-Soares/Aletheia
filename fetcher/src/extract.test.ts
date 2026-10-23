@@ -75,9 +75,9 @@ describe("extractPage: mídias", () => {
       PAGE,
     );
     assert.deepEqual(page.media, [
-      { url: "https://noticias.example/capa.jpg", kind: "image", source: "og:image" },
-      { url: "https://cdn.example/v.mp4", kind: "video", source: "og:video" },
-      { url: "https://noticias.example/corpo.jpg", kind: "image", source: "img" },
+      { url: "https://noticias.example/capa.jpg", kind: "image", source: "og:image", group: 1, score: 100, selected: true, skipReason: null },
+      { url: "https://cdn.example/v.mp4", kind: "video", source: "og:video", group: 2, score: 100, selected: true, skipReason: null },
+      { url: "https://noticias.example/corpo.jpg", kind: "image", source: "img", group: 3, score: 0, selected: true, skipReason: null },
     ]);
   });
 
@@ -155,8 +155,17 @@ describe("extractPage: mídias", () => {
     assert.deepEqual(urls(`<head><noscript><img src="h.jpg"></noscript></head><noscript><img src="b.jpg"></noscript>`), []);
   });
 
-  test("twitter:image não é extraído (decisão aberta em docs/fetcher.md)", () => {
-    assert.deepEqual(urls(`<meta name="twitter:image" content="https://cdn.example/t.jpg">`), []);
+  test("twitter:image e twitter:image:src são extraídos, depois do og:image", () => {
+    const page = extractPage(
+      `<meta name="twitter:image" content="https://cdn.example/t.jpg"><meta name="twitter:image:src" content="https://cdn.example/t2.jpg">
+       <meta property="og:image" content="https://cdn.example/o.jpg">`,
+      PAGE,
+    );
+    assert.deepEqual(page.media.map((m) => [m.url, m.source]), [
+      ["https://cdn.example/t.jpg", "twitter:image"],
+      ["https://cdn.example/t2.jpg", "twitter:image"],
+      ["https://cdn.example/o.jpg", "og:image"],
+    ]);
   });
 
   test("limita a quantidade de referências", () => {
@@ -231,7 +240,7 @@ describe("extractPage: HTML hostil", () => {
   });
 
   test("entrada vazia", () => {
-    assert.deepEqual(extractPage("", PAGE), { title: null, headline: null, media: [] });
+    assert.deepEqual(extractPage("", PAGE), { title: null, headline: null, media: [], possiblyNeedsJavaScript: false });
   });
 
   test("srcset terminado em vírgulas: tempo linear, sem ReDoS", () => {
