@@ -5,7 +5,7 @@ import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { FetchError, type FetchErrorCategory, OverloadedError } from "./errors.ts";
-import { createWorkerExtractor } from "./extract-pool.ts";
+import { createSemaphore, createWorkerExtractor } from "./extract-pool.ts";
 import { extractPage } from "./extract.ts";
 import { DEFAULT_LIMITS, resolveLimits } from "./limits.ts";
 import { formattingBomb, legitNewsPage, orphanEndTags } from "./testing.ts";
@@ -111,6 +111,41 @@ describe("extrator em worker", () => {
     assert.equal(limits.extractTotalMs, DEFAULT_LIMITS.extractTotalMs);
     assert.equal(limits.extractHeapMb, DEFAULT_LIMITS.extractHeapMb);
     assert.equal(limits.extractConcurrency, DEFAULT_LIMITS.extractConcurrency);
+  });
+});
+
+describe("semáforo da fila", () => {
+  test("abort tardio de quem já recebeu a vaga não tira outro da fila (indexOf = -1)", { timeout: 5_000 }, async () => {
+    const slots = createSemaphore(1, 4);
+    await slots.acquire(never()); // ocupa a única vaga
+    // Sinal cujo removeEventListener não remove: o abort chega depois que a vaga já foi dada.
+    let fireLateAbort = (): void => {};
+    const sticky = {
+      aborted: false,
+      addEventListener: (_type: string, listener: () => void) => {
+        fireLateAbort = listener;
+      },
+      removeEventListener: () => {},
+    } as unknown as AbortSignal;
+    const first = slots.acquire(sticky); // A na fila
+    const second = slots.acquire(never()); // B na fila
+    slots.release(); // A recebe a vaga
+    await first;
+    fireLateAbort(); // onAbort de A, com A fora da fila
+    slots.release(); // a vaga precisa ir para B
+    await second; // antes da correção, B saía da fila e nunca recebia a vaga
+  });
+
+  test("abort de quem está na fila remove só ele", async () => {
+    const slots = createSemaphore(1, 4);
+    await slots.acquire(never());
+    const controller = new AbortController();
+    const leaving = slots.acquire(controller.signal);
+    const staying = slots.acquire(never());
+    controller.abort();
+    await assertRejects(leaving, "timeout");
+    slots.release();
+    await staying;
   });
 });
 

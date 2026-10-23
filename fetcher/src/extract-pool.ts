@@ -15,11 +15,11 @@ const WORKER_URL = new URL("./extract-worker.ts", import.meta.url);
 const YOUNG_GENERATION_MB = 32;
 const QUEUE_PER_SLOT = 2;
 
-type Semaphore = { acquire: (signal: AbortSignal) => Promise<void>; release: () => void };
+export type Semaphore = { acquire: (signal: AbortSignal) => Promise<void>; release: () => void };
 
 // No máximo `size` vagas e `maxQueue` à espera (a excedente recebe OverloadedError na hora);
 // quem espera na fila desiste quando o sinal abortar.
-function createSemaphore(size: number, maxQueue: number): Semaphore {
+export function createSemaphore(size: number, maxQueue: number): Semaphore {
   let free = size;
   const queue: (() => void)[] = [];
   const release = (): void => {
@@ -40,7 +40,9 @@ function createSemaphore(size: number, maxQueue: number): Semaphore {
         resolve();
       };
       const onAbort = (): void => {
-        queue.splice(queue.indexOf(grant), 1);
+        // Se a vaga já foi dada, grant não está mais na fila: indexOf -1 e splice(-1) tiraria outro.
+        const index = queue.indexOf(grant);
+        if (index >= 0) queue.splice(index, 1);
         reject(new FetchError("timeout"));
       };
       queue.push(grant);
