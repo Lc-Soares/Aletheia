@@ -10,6 +10,22 @@ export default tseslint.config(
       globals: {
         process: "readonly",
         console: "readonly",
+        fetch: "readonly",
+        URL: "readonly",
+        Buffer: "readonly",
+        performance: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+      },
+    },
+  },
+  {
+    files: ["web/public/**/*.js"],
+    languageOptions: {
+      globals: {
+        document: "readonly",
+        window: "readonly",
+        google: "readonly",
       },
     },
   },
