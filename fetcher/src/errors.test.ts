@@ -74,6 +74,28 @@ describe("withDeadline: nenhuma ordem de eventos deixa rejeição sem tratamento
   });
 });
 
+describe("FetchError: httpStatus", () => {
+  test("upstream_status guarda o código HTTP, e a mensagem continua genérica", () => {
+    const error = new FetchError("upstream_status", 403);
+    assert.equal(error.httpStatus, 403);
+    assert.equal(error.message, "O site respondeu com erro");
+  });
+
+  test("outras categorias nunca carregam código", () => {
+    for (const category of ["blocked", "network", "timeout", "unsupported_type"] as const) {
+      assert.equal(new FetchError(category, 403).httpStatus, undefined);
+      assert.equal(Object.hasOwn(new FetchError(category, 403), "httpStatus"), false);
+    }
+  });
+
+  test("código fora de 100..599 ou não inteiro é descartado", () => {
+    for (const status of [0, 99, 600, 1.5, Number.NaN, -404]) {
+      assert.equal(new FetchError("upstream_status", status).httpStatus, undefined, String(status));
+    }
+    assert.equal(new FetchError("upstream_status").httpStatus, undefined);
+  });
+});
+
 describe("collectUnhandledRejections", () => {
   // Fora do test runner: sob o node:test a rejeição deliberada reprovaria este próprio teste.
   test("detecta uma rejeição sem tratamento deliberada", () => {

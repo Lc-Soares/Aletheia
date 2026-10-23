@@ -185,6 +185,49 @@ describe("serviço do fetcher: casos de erro e cancelamento", () => {
     }
   });
 
+  test("upstream_status da página: 422 com httpStatus e nada além", async () => {
+    const s = await start(async () => {
+      throw new FetchError("upstream_status", 403);
+    });
+    try {
+      const res = await post(s.base, { url: "https://noticias.example/" });
+      assert.equal(res.status, 422);
+      assert.deepEqual(await res.json(), { error: "upstream_status", message: "O site respondeu com erro", httpStatus: 403 });
+    } finally {
+      await s.close();
+    }
+  });
+
+  test("upstream_status de mídia: media_error com httpStatus; outras categorias sem o campo", async () => {
+    const secret = "CORPO-SECRETO-DO-SITE";
+    const pageTransport = routeTransport({
+      "https://noticias.example/p": html(`<img src="/sumiu.jpg"><img src="http://169.254.169.254/x.jpg">`),
+      "https://noticias.example/sumiu.jpg": { status: 410, headers: { "content-type": "text/html", "x-detalhe": secret }, body: secret },
+    });
+    const s = await start((url, signal) =>
+      fetchPage(url, {
+        resolver: fakeResolver({ "noticias.example": ["93.184.216.34"] }),
+        transport: pageTransport,
+        policy: isPublicAddress,
+        limits: resolveLimits(),
+        extract: createWorkerExtractor(resolveLimits()),
+      }, signal),
+    );
+    try {
+      const text = await (await post(s.base, { url: "https://noticias.example/p" })).text();
+      assert.equal(text.includes(secret), false);
+      const lines = text.trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+      const errors = lines.filter((l) => l["type"] === "media_error");
+      assert.equal(errors.length, 2);
+      assert.equal(errors[0]?.["error"], "upstream_status");
+      assert.equal(errors[0]?.["httpStatus"], 410);
+      assert.equal(errors[1]?.["error"], "blocked");
+      assert.equal(Object.hasOwn(errors[1] ?? {}, "httpStatus"), false);
+    } finally {
+      await s.close();
+    }
+  });
+
   test("cliente que desiste aborta os downloads em andamento", { timeout: 5_000 }, async () => {
     let onAbort = (): void => {};
     const aborted = new Promise<void>((resolve) => {

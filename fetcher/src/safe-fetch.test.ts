@@ -280,6 +280,44 @@ describe("safeFetch: limites", () => {
       await assertRejects(run("http://noticias.example/", makeDeps(transport)), "upstream_status");
     }
   });
+
+  test("upstream_status traz só o código HTTP, sem corpo nem cabeçalhos", async () => {
+    const secret = "SEGREDO-DO-SITE";
+    const transport = fakeTransport(() => ({
+      status: 403,
+      headers: { "content-type": "text/html", "x-detalhe": secret, "set-cookie": `s=${secret}` },
+      body: `<h1>${secret}</h1>`,
+    }));
+    const error = await run("http://noticias.example/", makeDeps(transport)).then(
+      () => assert.fail("esperava erro"),
+      (e: unknown) => e,
+    );
+    assert.ok(error instanceof FetchError);
+    assert.equal(error.category, "upstream_status");
+    assert.equal(error.httpStatus, 403);
+    assert.deepEqual(Object.keys(error).sort(), ["category", "httpStatus", "name"]);
+    assert.equal(`${error.message}${error.stack ?? ""}${JSON.stringify(error)}`.includes(secret), false);
+  });
+
+  test("redirecionamento sem Location: upstream_status com o código 3xx", async () => {
+    const error = await run("http://noticias.example/", makeDeps(fakeTransport(() => ({ status: 307 })))).then(
+      () => assert.fail("esperava erro"),
+      (e: unknown) => e,
+    );
+    assert.ok(error instanceof FetchError);
+    assert.equal(error.httpStatus, 307);
+  });
+
+  test("outras categorias não carregam código HTTP", async () => {
+    const transport = fakeTransport(() => ({ status: 200, headers: { "content-type": "application/pdf" }, body: "x" }));
+    const error = await run("http://noticias.example/", makeDeps(transport)).then(
+      () => assert.fail("esperava erro"),
+      (e: unknown) => e,
+    );
+    assert.ok(error instanceof FetchError);
+    assert.equal(error.category, "unsupported_type");
+    assert.equal(error.httpStatus, undefined);
+  });
 });
 
 describe("safeFetch: cabeçalhos enviados", () => {

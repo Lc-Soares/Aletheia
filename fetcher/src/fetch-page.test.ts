@@ -193,6 +193,28 @@ describe("fetchPage", () => {
     await assert.rejects(fetchPage("https://noticias.example/", { ...deps(transport), extract }), OverloadedError);
   });
 
+  test("mídia com erro HTTP: upstream_status com o código; outras falhas sem código", async () => {
+    const transport = routeTransport({
+      "https://noticias.example/": html(`<img src="/sumiu.jpg"><img src="http://interno.example/b.jpg">`),
+    });
+    const result = await fetchPage("https://noticias.example/", deps(transport));
+    assert.deepEqual(
+      result.downloads.map((d) => (d.ok ? "ok" : [d.error, d.httpStatus])),
+      [
+        ["upstream_status", 404],
+        ["blocked", undefined],
+      ],
+    );
+  });
+
+  test("página com erro HTTP: upstream_status com o código", async () => {
+    const transport = routeTransport({ "https://noticias.example/": { status: 503, headers: { "content-type": "text/html" } } });
+    await assert.rejects(
+      fetchPage("https://noticias.example/", deps(transport)),
+      (error: unknown) => error instanceof FetchError && error.category === "upstream_status" && error.httpStatus === 503,
+    );
+  });
+
   test("falha da página inteira lança erro com categoria", async () => {
     await assert.rejects(
       fetchPage("http://interno.example/", deps(routeTransport({}))),
