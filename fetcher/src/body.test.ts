@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { getDefaultHighWaterMark, Readable } from "node:stream";
 import { describe, test } from "node:test";
-import { brotliCompressSync, constants, deflateSync, gzipSync } from "node:zlib";
+import { brotliCompressSync, constants, createGunzip, deflateSync, gunzipSync, gzipSync } from "node:zlib";
 
 import { readLimited } from "./body.ts";
 import { FetchError, type FetchErrorCategory } from "./errors.ts";
@@ -70,14 +70,48 @@ describe("readLimited", () => {
     }
   }
 
-  test("bomba gzip: aborta logo depois do limite descompactado", async () => {
+  // Os ~200 KiB comprimidos cabem no read-ahead (no Linux foram lidos inteiros), então o que se
+  // mede são os bytes DESCOMPACTADOS que o Gunzip chegou a produzir. Teto derivado de readLimited
+  // (Gunzip -> consumidor), com hwm = getDefaultHighWaterMark(false) e Z = Z_DEFAULT_CHUNK, o
+  // tamanho de cada saída do zlib:
+  //   chunk que cruza o limite (o consumidor conta e falha)   Z
+  //   buffer de leitura do Gunzip                              até hwm + Z
+  //   saída em produção quando o destroy chega                 Z
+  // Total: limite + hwm + 3 × Z. A CPU só é registrada (t.diagnostic); não reprova o teste.
+  test("bomba gzip: o descompactado é cortado logo depois do limite", async (t) => {
     const bomb = gzipSync(Buffer.alloc(200 * MIB)); // ~200 KiB compactados
     assert.ok(bomb.length < 1 * MIB);
-    const stream = countingStream(bomb);
+    const limit = 2 * MIB;
+    const ceiling = limit + getDefaultHighWaterMark(false) + 3 * constants.Z_DEFAULT_CHUNK;
+
+    const probe = createGunzip();
+    const gunzipPrototype = Object.getPrototypeOf(probe) as { push: (chunk: unknown, encoding?: BufferEncoding) => boolean };
+    probe.destroy();
+    const originalPush = gunzipPrototype.push;
+    let decoded = 0;
+    const counter = t.mock.method(gunzipPrototype, "push", function (this: unknown, chunk: unknown, encoding?: BufferEncoding) {
+      if (Buffer.isBuffer(chunk)) decoded += chunk.length;
+      return originalPush.call(this, chunk, encoding);
+    });
+
     const used = process.memoryUsage().arrayBuffers;
-    await assertRejects(readLimited(stream, "gzip", 2 * MIB, never), "too_large");
-    assert.ok(stream.pulled() < bomb.length, "não leu a bomba inteira");
-    assert.ok(process.memoryUsage().arrayBuffers - used < 50 * MIB, "não expandiu na memória");
+    const cpuStart = process.cpuUsage();
+    await assertRejects(readLimited(countingStream(bomb), "gzip", limit, never), "too_large");
+    const cpu = process.cpuUsage(cpuStart);
+    const grown = process.memoryUsage().arrayBuffers - used;
+    counter.mock.restore();
+
+    const fullStart = process.cpuUsage();
+    gunzipSync(bomb);
+    const full = process.cpuUsage(fullStart);
+    const ms = (usage: NodeJS.CpuUsage): string => ((usage.user + usage.system) / 1000).toFixed(1);
+    t.diagnostic(
+      `descompactado ${decoded} bytes = limite + ${(decoded - limit) / KIB} KiB (teto: limite + ${(ceiling - limit) / KIB} KiB); ` +
+        `CPU até o aborto ${ms(cpu)} ms; descompactar a bomba inteira: ${ms(full)} ms`,
+    );
+    assert.ok(decoded > limit, "o contador viu a saída do Gunzip"); // too_large só sai acima do limite
+    assert.ok(decoded <= ceiling, `descompactou ${decoded} bytes; teto ${ceiling}`);
+    assert.ok(grown < 50 * MIB, "não expandiu na memória");
   });
 
   test("bomba brotli: aborta logo depois do limite descompactado", async () => {
