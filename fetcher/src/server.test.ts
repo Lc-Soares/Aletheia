@@ -119,6 +119,13 @@ describe("serviço do fetcher", () => {
     const lines = (await res.text()).trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
     assert.deepEqual(lines.map((l) => l["type"]), ["page", "media", "media_error", "done"]);
     assert.equal(lines[0]?.["title"], "Título");
+    assert.equal(lines[0]?.["possiblyNeedsJavaScript"], false);
+    assert.deepEqual(lines[0]?.["media"], [
+      { url: "https://noticias.example/a.jpg", kind: "image", source: "img", group: 1, score: 0, selected: true, skipReason: null },
+      { url: "http://169.254.169.254/x.jpg", kind: "image", source: "img", group: 2, score: 0, selected: true, skipReason: null },
+    ]);
+    assert.equal(lines[1]?.["group"], 1);
+    assert.equal(lines[2]?.["group"], 2);
     const media = lines[1] ?? {};
     const bytes = Buffer.from(String(media["data"]), "base64");
     assert.equal(bytes.toString(), "JPEG-BYTES");
@@ -300,7 +307,7 @@ describe("hash de domínio nos logs (HMAC com chave do processo)", () => {
 
 describe("serviço do fetcher: teto de requisições em andamento", () => {
   const MIB = 1024 * 1024;
-  const emptyResult = { finalUrl: "https://noticias.example/", title: null, headline: null, media: [], downloads: [] };
+  const emptyResult = { finalUrl: "https://noticias.example/", title: null, headline: null, media: [], possiblyNeedsJavaScript: false, downloads: [] };
 
   test("acima do limite, as excedentes recebem 503 rápido e a memória não cresce", { timeout: 30_000 }, async () => {
     let calls = 0;
@@ -390,14 +397,19 @@ describe("serviço do fetcher: prazos de escrita da resposta", () => {
     url: `https://cdn.example/${i}.jpg`,
     kind: "image" as const,
     source: "img" as const,
+    group: i,
+    score: 0,
+    selected: true,
+    skipReason: null,
     ok: true as const,
     contentType: "image/jpeg",
     size: bytes.length,
     sha256: "0".repeat(64),
     bytes,
   });
-  const big = { finalUrl: "https://noticias.example/", title: "t", headline: null, media: [], downloads: [1, 2, 3, 4].map(download) };
-  const small = { finalUrl: "https://noticias.example/", title: "t", headline: null, media: [], downloads: [] };
+  const page = { finalUrl: "https://noticias.example/", title: "t", headline: null, media: [], possiblyNeedsJavaScript: false };
+  const big = { ...page, downloads: [1, 2, 3, 4].map(download) };
+  const small = { ...page, downloads: [] };
   const bigOrSmall: PageFetcher = async (url) => (url.endsWith("/grande") ? big : small);
 
   // Chamador por socket cru que envia o pedido e nunca lê a resposta.
@@ -494,10 +506,15 @@ describe("serviço do fetcher: log de respostas que não terminam", () => {
     title: "t",
     headline: null,
     media: [],
+    possiblyNeedsJavaScript: false,
     downloads: [1, 2, 3, 4].map((i) => ({
       url: `https://cdn.example/${i}.jpg`,
       kind: "image" as const,
       source: "img" as const,
+      group: i,
+      score: 0,
+      selected: true,
+      skipReason: null,
       ok: true as const,
       contentType: "image/jpeg",
       size: bytes.length,
