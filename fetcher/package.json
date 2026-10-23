@@ -4,7 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "start": "node src/main.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "google-auth-library": "^11.3.1",
