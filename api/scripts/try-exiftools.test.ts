@@ -4,16 +4,19 @@ import { once } from "node:events";
 import fs, { readdirSync, readFileSync } from "node:fs";
 import { posix } from "node:path";
 import { describe, test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   contentCredentials,
   exifSuccess,
   type FakeExifToolsHandler,
+  type FakeExifToolsRequest,
   parseMultipart,
   sendJsonResponse,
   startFakeExifTools,
   TEST_EXIFTOOLS_KEY,
 } from "../src/testing.ts";
+import * as script from "./try-exiftools.ts";
 import { contentTypeFor, main, sanitize, tagNames } from "./try-exiftools.ts";
 
 const FILE_BYTES = Buffer.from("BYTES-DO-ARQUIVO-QUE-NAO-PODEM-APARECER");
@@ -227,6 +230,154 @@ describe("try-exiftools: termina sozinho", () => {
     } finally {
       await fake.close();
     }
+  });
+});
+
+// Comportamento, não texto do código: o ambiente e o leitor de arquivos injetados registram cada
+// acesso. O script só pode ler EXIFTOOLS_API_KEY e o arquivo passado como argumento.
+const SENTINELS = {
+  EXIFTOOLS_API_KEY: "SENTINELA-CHAVE-7f3a",
+  OUTRO_SEGREDO: "SENTINELA-OUTRO-91bc",
+  GOOGLE_CLIENT_ID: "SENTINELA-ID-44de",
+  FETCHER_URL: "https://SENTINELA-FETCHER.example",
+};
+const OTHERS = { OUTRO_SEGREDO: SENTINELS.OUTRO_SEGREDO, GOOGLE_CLIENT_ID: SENTINELS.GOOGLE_CLIENT_ID, FETCHER_URL: SENTINELS.FETCHER_URL };
+
+// Ambiente que registra leitura de chave, teste de presença, enumeração (Object.keys, spread) e
+// descritores. Qualquer acesso além de EXIFTOOLS_API_KEY aparece na lista.
+function recordingEnv(values: Record<string, string>): { env: Record<string, string | undefined>; accessed: () => string[] } {
+  const log: string[] = [];
+  const env = new Proxy<Record<string, string | undefined>>(
+    { ...values },
+    {
+      get: (target, key, receiver) => (log.push(String(key)), Reflect.get(target, key, receiver)),
+      has: (target, key) => (log.push(`in:${String(key)}`), Reflect.has(target, key)),
+      ownKeys: (target) => (log.push("(enumeração)"), Reflect.ownKeys(target)),
+      getOwnPropertyDescriptor: (target, key) => (log.push(`descritor:${String(key)}`), Reflect.getOwnPropertyDescriptor(target, key)),
+    },
+  );
+  return { env, accessed: () => [...new Set(log)] };
+}
+
+type Probe = { code: number; output: string; requests: FakeExifToolsRequest[]; accessed: string[]; reads: string[] };
+
+async function probe(argv: string[], values: Record<string, string>, files: Record<string, Buffer> = { "foto.jpg": FILE_BYTES }): Promise<Probe> {
+  const fake = await startFakeExifTools((_req, res) => sendJsonResponse(res, 200, exifSuccess()));
+  const { env, accessed } = recordingEnv(values);
+  const reads: string[] = [];
+  let output = "";
+  try {
+    const code = await main(argv, {
+      env,
+      endpoint: fake.endpoint,
+      readFile: async (path) => {
+        reads.push(path);
+        const content = files[path];
+        if (content === undefined) throw new Error("arquivo não existe");
+        return content;
+      },
+      write: (text) => {
+        output += text;
+      },
+    });
+    return { code, output, requests: fake.requests, accessed: accessed(), reads };
+  } finally {
+    await fake.close();
+  }
+}
+
+function assertNoSentinel(text: string, where: string): void {
+  for (const value of Object.values(SENTINELS)) assert.equal(text.includes(value), false, `${where} contém ${value}`);
+  assert.equal(text.includes("SENTINELA"), false, where);
+}
+
+describe("try-exiftools: só lê EXIFTOOLS_API_KEY e o arquivo do argumento (comportamento)", () => {
+  test("com outras variáveis no ambiente: lê só EXIFTOOLS_API_KEY, e a chave vai só no X-API-Key", async () => {
+    const { code, output, requests, accessed } = await probe(["foto.jpg"], SENTINELS);
+    assert.equal(code, 0);
+    assert.deepEqual(accessed, ["EXIFTOOLS_API_KEY"], "nenhuma outra variável e nenhuma enumeração");
+    assert.equal(requests.length, 1);
+    const [req] = requests;
+    assert.equal(req?.headers["x-api-key"], SENTINELS.EXIFTOOLS_API_KEY);
+    const otherHeaders = Object.fromEntries(Object.entries(req?.headers ?? {}).filter(([name]) => name !== "x-api-key"));
+    assertNoSentinel(JSON.stringify(otherHeaders), "outros cabeçalhos");
+    assertNoSentinel(req?.path ?? "", "caminho da requisição");
+    assertNoSentinel(req?.rawBody.toString("latin1") ?? "", "corpo da requisição");
+    assertNoSentinel(output, "saída");
+  });
+
+  for (const [name, values] of [
+    ["ausente", OTHERS],
+    ["só espaços", { ...OTHERS, EXIFTOOLS_API_KEY: "   " }],
+  ] as const) {
+    test(`chave ${name}, com outras variáveis presentes: código 2, sem tentar outra variável nem a ExifTools`, async () => {
+      const { code, output, requests, accessed, reads } = await probe(["foto.jpg"], values);
+      assert.equal(code, 2);
+      assert.match(output, /EXIFTOOLS_API_KEY/);
+      assert.deepEqual(accessed, ["EXIFTOOLS_API_KEY"]);
+      assert.equal(requests.length, 0);
+      assert.deepEqual(reads, []);
+      assertNoSentinel(output, "saída");
+    });
+  }
+
+  test("lê só o arquivo do argumento: nenhum .env nem outro caminho", async () => {
+    const { reads } = await probe(["foto.jpg"], SENTINELS);
+    assert.deepEqual(reads, ["foto.jpg"]);
+    for (const path of reads) assert.equal(path.includes(".env"), false);
+  });
+
+  test("uso errado ou extensão inválida: nenhum arquivo é lido", async () => {
+    for (const argv of [[], ["a.jpg", "b.jpg"], ["-x"], ["nota.txt"]]) {
+      const { reads, requests } = await probe(argv, SENTINELS, { "nota.txt": Buffer.from("x") });
+      assert.deepEqual(reads, [], JSON.stringify(argv));
+      assert.equal(requests.length, 0);
+    }
+  });
+
+  test("scriptEnv (ponto de entrada) entrega a main só EXIFTOOLS_API_KEY, sem enumerar o ambiente", () => {
+    const scriptEnv = (script as Record<string, unknown>)["scriptEnv"];
+    assert.equal(typeof scriptEnv, "function", "scriptEnv precisa existir");
+    const build = scriptEnv as (env: Record<string, string | undefined>) => Record<string, unknown>;
+    const full = recordingEnv(SENTINELS);
+    const result = build(full.env);
+    assert.deepEqual(full.accessed(), ["EXIFTOOLS_API_KEY"]);
+    assert.deepEqual(result, { EXIFTOOLS_API_KEY: SENTINELS.EXIFTOOLS_API_KEY });
+    for (const value of Object.values(OTHERS)) assert.equal(JSON.stringify(result).includes(value), false, value);
+    const missing = recordingEnv(OTHERS);
+    assert.deepEqual(build(missing.env), { EXIFTOOLS_API_KEY: undefined });
+    assert.deepEqual(missing.accessed(), ["EXIFTOOLS_API_KEY"]);
+  });
+
+  test("com o leitor padrão, o arquivo de verdade do disco é o que vai para a ExifTools", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/amostra.jpg", import.meta.url));
+    const fake = await startFakeExifTools((_req, res) => sendJsonResponse(res, 200, exifSuccess()));
+    let output = "";
+    try {
+      const code = await main([fixture], {
+        env: { EXIFTOOLS_API_KEY: TEST_EXIFTOOLS_KEY },
+        endpoint: fake.endpoint,
+        write: (text) => {
+          output += text;
+        },
+      });
+      assert.equal(code, 0);
+      assert.match(output, /Arquivo: amostra\.jpg/);
+      const file = (await parseMultipart(fake.requests[0] ?? assert.fail("sem requisição"))).get("file");
+      assert.ok(file instanceof File);
+      assert.equal(file.name, "media.jpg");
+      assert.ok(Buffer.from(await file.arrayBuffer()).equals(readFileSync(fixture)));
+    } finally {
+      await fake.close();
+    }
+  });
+
+  // Alarme, NÃO garantia de segurança: só chama atenção para revisar se aparecer outro process.env no
+  // script. Não pega acessos por outro caminho (process["env"], alias), que são cobertos pelos testes
+  // de comportamento acima.
+  test("alarme (não é garantia de segurança): o script tem exatamente uma ocorrência de process.env", () => {
+    const source = readFileSync(new URL("./try-exiftools.ts", import.meta.url), "utf8");
+    assert.equal((source.match(/process\.env/g) ?? []).length, 1);
   });
 });
 
