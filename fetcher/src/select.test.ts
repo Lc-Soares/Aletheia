@@ -90,7 +90,7 @@ describe("seleção: pontuação e motivos", () => {
         [2, "principal-1600.jpg", 20, null],
         [3, "segunda-1600.avif", 20, null],
         [4, "evolucao.svg", 20, "unsupported_format"],
-        [5, "relacionada.jpg", -10, null],
+        [5, "relacionada.jpg", -10, "low_score"],
         [6, "marca.png", -70, "icon"],
         [7, "busca.png", -70, "icon"],
         [8, "menu.png", -90, "icon"],
@@ -162,9 +162,23 @@ describe("seleção: pontuação e motivos", () => {
     ]);
   });
 
-  test("só ancestral de layout rebaixa sem excluir", () => {
+  test("só ancestral de layout: não selecionado, low_score", () => {
     const page = extractPage(`<nav><img src="/n.jpg"></nav>`, PAGE);
-    assert.deepEqual(page.media.map((m) => [m.score, m.selected]), [[-30, true]]);
+    assert.deepEqual(page.media.map((m) => [m.score, m.selected, m.skipReason]), [[-30, false, "low_score"]]);
+  });
+
+  test("pontuação negativa nunca é selecionada, mesmo com vaga; 0 e positiva continuam elegíveis", () => {
+    const page = extractPage(
+      `<article><img class="logo" src="/a/marca.png"></article><nav><img src="/n/foto.jpg"></nav>
+       <img src="/solta.jpg"><article><img src="/materia.jpg"></article>`,
+      PAGE,
+    );
+    assert.deepEqual(page.media.map((m) => [file(m), m.score, m.selected, m.skipReason]), [
+      ["marca.png", -20, false, "low_score"],
+      ["foto.jpg", -30, false, "low_score"],
+      ["solta.jpg", 0, true, null],
+      ["materia.jpg", 20, true, null],
+    ]);
   });
 
   test("nunca mais de maxSelectedMedia selecionadas; o resto fica como limite", () => {

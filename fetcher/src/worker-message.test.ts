@@ -107,7 +107,7 @@ describe("validateWorkerPage", () => {
   ];
 
   test("grupo com representante e variante passa; todos os motivos conhecidos passam", () => {
-    for (const reason of ["icon", "unsupported_format", "limit", "other"]) {
+    for (const reason of ["icon", "unsupported_format", "low_score", "limit", "other"]) {
       const media = [ref({ selected: false, skipReason: reason }), variant()];
       assert.deepEqual(validateWorkerPage(page({ media }), LIMITS).media, media);
     }
