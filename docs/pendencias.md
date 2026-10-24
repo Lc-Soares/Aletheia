@@ -2,23 +2,15 @@
 
 Lista única do que falta, atualizada em **24/10/2026**, ao fim da Fase 4. Cada item aponta para a doc que trata do assunto, quando ela existe; os detalhes ficam lá, não aqui.
 
-## Interface (próximo PR, em `web/`)
+## Interface (`web/`)
 
-- **Status de sessão:** limpar o texto "Sessão expirada, entre novamente" quando entra um token novo pelo login. É um bug cosmético observado.
 - **Renovação do token:** migrar o callback do `prompt()` para não depender dos métodos de status do One Tap, que estão marcados como obsoletos com o FedCM (aviso `GSI_LOGGER` no console). Ver `docs/desenvolvimento-local.md`, "Renovação do ID token".
 - **COOP:** endurecer o `Cross-Origin-Opener-Policy` (`same-origin-allow-popups`) antes do deploy.
-- **Relatório:**
-  - agrupar as mídias por `group`, com uma linha por imagem (`docs/api.md`, "Resposta 200");
-  - motivos de mídia ignorada em linguagem simples;
-  - avisos fixos;
-  - `possiblyNeedsJavaScript` apresentado como possibilidade;
-  - `containsLocation` e `containsAuthorship` como "contém localização" e "contém autoria declarada", sem valores;
-  - no futuro, se nomes passarem a ser exibidos, a opção de ocultar antes de mostrar;
-  - escapar todo texto de terceiros, nunca `innerHTML`.
+- **Nomes de autor ou de local:** se um dia passarem a ser exibidos, oferecer a opção de ocultar antes de mostrar (hoje a interface mostra só "contém localização" e "contém autoria declarada", sem valores).
 
 ## Próximas fases
 
-- **Interface do relatório**, com PDF e JSON gerados no navegador (`docs/arquitetura.md`).
+- **PDF do relatório**, gerado no navegador (`docs/arquitetura.md`). O JSON e a interface do relatório já existem.
 - **Fase 5:**
   - ClaimReview em JSON-LD na própria página;
   - Fact Check Tools (`claims.search`), com chave de API restrita a essa API;
@@ -27,7 +19,7 @@ Lista única do que falta, atualizada em **24/10/2026**, ao fim da Fase 4. Cada 
 
 ## Validação pendente
 
-- **C2PA com arquivo real. Não bloqueante para o primeiro deploy.** Para arquivos sem C2PA, o relatório vale como "não vimos assinatura". O caminho com C2PA real continua **não validado**. O repositório `c2pa-org/public-testfiles` estava sem arquivos em 24/10/2026. Gerar uma imagem com Content Credentials ou achar outro conjunto de arquivos. O que falta verificar na ExifTools: `docs/api.md`, "Teste real da ExifTools".
+- **C2PA com arquivo real. Não bloqueante para o primeiro deploy.** Para arquivos sem C2PA, o relatório vale como "não vimos assinatura". O caminho com C2PA real continua **não validado**, inclusive na interface, que só foi testada com fixtures sintéticas. O repositório `c2pa-org/public-testfiles` estava sem arquivos em 24/10/2026. Gerar uma imagem com Content Credentials ou achar outro conjunto de arquivos. O que falta verificar na ExifTools: `docs/api.md`, "Teste real da ExifTools".
 
 ## Segurança e operação
 
