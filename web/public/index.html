@@ -12,6 +12,11 @@
       <p>Sinais de proveniência de mídia. O sistema descreve sinais e limitações, nunca dá um veredito.</p>
       <div id="signin"></div>
       <p id="status" role="status"></p>
+      <div id="session-check" class="session-check" hidden>
+        <button id="verify-session" type="button">Verificar sessão</button>
+        <span id="session-status" role="status"></span>
+        <span id="session-expiry"></span>
+      </div>
     </main>
     <script type="module" src="/app.js"></script>
     <script src="https://accounts.google.com/gsi/client" async></script>

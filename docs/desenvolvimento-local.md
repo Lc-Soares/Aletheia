@@ -111,3 +111,9 @@ Em produção, apenas a origem exata do Firebase Hosting (`https://<projeto>.web
 ## Renovação do ID token
 
 A documentação do Google Identity Services diz que o ID token dura 1 hora, que um token expirado não significa usuário deslogado e que a sessão é responsabilidade do app. Ela não descreve uma chamada de "renovar". O front, ao receber 401, chama `google.accounts.id.prompt()` e usa o novo credential entregue ao callback (o Google devolve sem interação se o usuário já consentiu). Se o prompt não for exibido ou for dispensado, a tela pede novo login. Esse comportamento ainda não foi validado com o Google real.
+
+**Teste manual com o botão "Verificar sessão"** (aparece depois do login). O botão repete `GET /api/me` pelo mesmo fluxo de renovação, com no máximo uma renovação por clique e prazo de 15 s.
+1. Clique logo depois do login: o esperado é "Sessão ativa" e "Token expira às HH:MM". O horário vem do `exp` do token, lido sem verificar a assinatura; é só informação de tela.
+2. Clique depois de mais de 1 hora: "Token renovado" ou "Sessão expirada, entre novamente". As duas respostas são válidas, conforme o Google permita ou não a renovação silenciosa (cooldown do One Tap, FedCM, cookies de terceiros bloqueados).
+
+O console do navegador mostra o início, o sucesso ou a falha da renovação (`console.info`), sem token nem e-mail. **Esse comportamento só se valida no navegador, com o Google real**: os testes automatizados usam uma renovação falsa.

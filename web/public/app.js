@@ -1,14 +1,30 @@
 import { GOOGLE_CLIENT_ID } from "./config.js";
-import { createUi } from "./render.js";
+import { createSessionCheckUi, createUi } from "./render.js";
 import { createSession } from "./session.js";
 
 const RENEW_TIMEOUT_MS = 15_000;
 
-const signin = /** @type {HTMLElement} */ (document.getElementById("signin"));
-const ui = createUi({
-  status: /** @type {HTMLElement} */ (document.getElementById("status")),
-  signin,
+/** @param {string} id */
+const byId = (id) => /** @type {HTMLElement} */ (document.getElementById(id));
+
+const signin = byId("signin");
+const verifyButton = /** @type {HTMLButtonElement} */ (byId("verify-session"));
+const checkUi = createSessionCheckUi({
+  panel: byId("session-check"),
+  button: verifyButton,
+  status: byId("session-status"),
+  expiry: byId("session-expiry"),
 });
+const baseUi = createUi({ status: byId("status"), signin });
+// O painel "Verificar sessão" aparece depois do primeiro login bem-sucedido.
+const ui = {
+  ...baseUi,
+  /** @param {string} email */
+  showEmail(email) {
+    baseUi.showEmail(email);
+    checkUi.show();
+  },
+};
 
 /** @type {((token: string | null) => void) | null} */
 let pendingRenewal = null;
@@ -39,7 +55,10 @@ const session = createSession({
   fetchFn: (url, init) => fetch(url, init),
   renewToken,
   ui,
+  checkUi,
 });
+
+verifyButton.addEventListener("click", () => void session.verify());
 
 /** @param {{ credential: string }} response */
 function onCredential(response) {
