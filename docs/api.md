@@ -159,16 +159,17 @@ HTML continua sendo texto: quem exibe escapa.
 | Sinal | Origem |
 | --- | --- |
 | `fileType`, `mimeType` | `metadata.File.FileType`; `mimeType` (ou `metadata.File.MIMEType`) |
-| `width`, `height` | `metadata.File.ImageWidth` / `ImageHeight`, inteiros positivos |
+| `width`, `height` | Sempre da mesma fonte, nesta ordem: `metadata.Composite.ImageSize`; o campo de nível superior `dimensions`; em último caso, `metadata.File.ImageWidth`/`ImageHeight` (nomes do exemplo da documentação, que a resposta real não traz). O texto só é aceito no formato `"640x480"` (também `"640 x 480"` e `"640×480"`). Cada valor precisa ser inteiro de 1 a 100000; qualquer outra coisa vira `null` |
 | `sha256` | o calculado pelo fetcher e conferido pela API (não o da ExifTools) |
 | `dates[]` `{tag, value}` | `EXIF:DateTimeOriginal`, `EXIF:CreateDate`, `EXIF:ModifyDate`, `XMP:CreateDate`, `XMP:ModifyDate`, `XMP:MetadataDate`. As datas do sistema de arquivos do servidor da ExifTools (`File.FileModifyDate`…) ficam de fora |
 | `camera` `{make, model}` | `EXIF.Make`, `EXIF.Model` |
 | `software[]` | `EXIF.Software`, `EXIF.ProcessingSoftware`, `XMP.CreatorTool`, `XMP.HistorySoftwareAgent`, sem repetição, até 10 |
-| `containsLocation` | `true` se houver `GPS.GPSLatitude`/`GPSLongitude`, `Composite.GPSPosition`/`GPSLatitude`/`GPSLongitude` ou `XMP.GPSLatitude`/`GPSLongitude`. **Nunca as coordenadas** |
+| `containsLocation` | `true` se houver alguma destas fontes:<br>• `GPS.GPSLatitude`/`GPSLongitude`, `EXIF.GPSLatitude`/`GPSLongitude`, `Composite.GPSPosition`/`GPSLatitude`/`GPSLongitude` ou `XMP.GPSLatitude`/`GPSLongitude`, com valor presente;<br>• `address` ou `addressPlusCode` de nível superior, com texto não vazio;<br>• `latitude` ou `gpsCoordinates.lat` de nível superior, com número de −90 a 90;<br>• `longitude` ou `gpsCoordinates.lng` de nível superior, com número de −180 a 180.<br>**Nunca as coordenadas nem o endereço** |
 | `containsAuthorship` | `true` se houver `author`, `IPTC.By-line`, `IPTC.CopyrightNotice`, `EXIF.Artist`, `EXIF.Copyright`, `XMP.Creator`, `XMP.Rights` ou `contentCredentials.creator`. **Nunca o nome nem o aviso de copyright** |
 | `c2pa` (ou `null`) | de `contentCredentials`: `state`, `reason`, `signer`, `certificateName`, `trustList`, `signedAt`, `timestamped`, `generator`, `aiGenerated`, `digitalSourceTypes` (até 10), `actions` (até 20, só `action`, `softwareAgent` e `digitalSourceType`), `checks` (até 50, só `code` e `outcome`), `ingredientCount` e `remoteHost` |
 
 **Nunca saem:**
+- o endereço e as coordenadas que a resposta real traz no nível superior: `address` e `addressPlusCode` (derivados do GPS pela ExifTools), `gpsCoordinates`, `latitude` e `longitude`. A API descarta todos; eles só servem para decidir `containsLocation`;
 - identificadores e metadados da própria ExifTools: `uuid`, `fileName`, `processedAt`;
 - o `manifestUrl` do bloco C2PA, que é um link com o UUID do resultado guardado na ExifTools;
 - outros campos do bloco C2PA: `creator`, `title`, `aiTraining`, `algorithm`, `checkedAt` e o conteúdo de `ingredients` (a árvore não é documentada, então só a contagem);

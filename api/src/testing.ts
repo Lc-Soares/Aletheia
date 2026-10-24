@@ -321,3 +321,60 @@ export function contentCredentials(overrides: Record<string, unknown> = {}): Rec
     ...overrides,
   };
 }
+
+// Resposta no formato REAL observado num teste com a ExifTools (try-exiftools com um JPEG de
+// metadados conhecidos): os nomes de campos e grupos são os reais; os valores são fictícios, e os
+// que nunca podem sair levam o prefixo SENTINELA (ou coordenadas fictícias fáceis de procurar).
+// Diferenças em relação ao exemplo da documentação: não há File.ImageWidth/ImageHeight (as
+// dimensões vêm em Composite.ImageSize e em dimensions), e há campos de nível superior derivados
+// do GPS (address, addressPlusCode, gpsCoordinates, latitude, longitude).
+export function exifRealResponse(): Record<string, unknown> {
+  return {
+    address: "SENTINELA-ENDERECO Rua Inventada, 123, Cidade Fictícia",
+    addressPlusCode: "SENTINELA-PLUSCODE 588MC9X8+QG",
+    author: "SENTINELA-AUTOR Pessoa Fictícia",
+    cameraModel: "SENTINELA-CAMERAMODEL",
+    createDate: "SENTINELA-CREATEDATE",
+    dimensions: "640x480",
+    fileName: "SENTINELA-FILENAME.jpg",
+    fileSize: "45 kB",
+    fileSizeBytes: 46080,
+    gpsCoordinates: { lat: -12.3456, lng: -45.6789 },
+    latitude: -12.3456,
+    longitude: -45.6789,
+    metadata: {
+      Composite: {
+        GPSLatitude: -12.3456,
+        GPSLongitude: -45.6789,
+        GPSPosition: "12.3456 S, 45.6789 W",
+        ImageSize: "640x480",
+        Megapixels: 0.307,
+      },
+      EXIF: {
+        Artist: "SENTINELA-ARTIST",
+        Copyright: "SENTINELA-COPYRIGHT",
+        CreateDate: "2021:02:03 04:05:06",
+        DateTimeOriginal: "2021:02:03 04:05:00",
+        GPSLatitude: "12 deg 20' 44.16\" S",
+        GPSLatitudeRef: "South",
+        GPSLongitude: "45 deg 40' 44.04\" W",
+        GPSLongitudeRef: "West",
+        Make: "Fabricante Fictício",
+        Model: "Modelo Fictício X1",
+        ModifyDate: "2021:02:04 10:00:00",
+        Software: "Editor Fictício 1.0",
+      },
+      File: { FileType: "JPEG", FileTypeExtension: "jpg", MIMEType: "image/jpeg", FileSize: "45 kB" },
+      JFIF: { JFIFVersion: "1.01", ResolutionUnit: "inches", XResolution: 72, YResolution: 72 },
+      XMP: { CreateDate: "2021:02:03 04:05:06", CreatorTool: "Ferramenta Fictícia 2.0", ModifyDate: "2021:02:04 10:00:00" },
+    },
+    mimeType: "image/jpeg",
+    processedAt: "2026-10-24T12:00:00+00:00",
+    status: "completed",
+    success: true,
+    uuid: "SENTINELA-UUID",
+    // SUPOSIÇÃO: da resposta real foram observados só os nomes dos campos; o valor de
+    // contentCredentials num arquivo sem C2PA não foi visto (null é a escolha deste teste).
+    contentCredentials: null,
+  };
+}
