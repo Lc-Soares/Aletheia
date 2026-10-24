@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { extractSignals, type MediaSignals } from "./metadata-allowlist.ts";
-import { contentCredentials, exifSuccess } from "./testing.ts";
+import { contentCredentials, exifRealResponse, exifSuccess } from "./testing.ts";
 
 const SHA = "f".repeat(64);
 
@@ -81,6 +81,14 @@ function hostileResponse(): Record<string, unknown> {
     author: "Fulano de Tal",
     fileName: "foto-da-familia-fulano.jpg",
     campoInventado: "NovoCampoSecreto",
+    // Campos de nível superior da resposta real (derivados do GPS e resumos de autoria e câmera).
+    address: "SENTINELA-H-ENDERECO Rua Secreta, 99",
+    addressPlusCode: "SENTINELA-H-PLUSCODE 58XX+YY",
+    latitude: -23.9876,
+    longitude: -46.5432,
+    gpsCoordinates: { lat: -23.9876, lng: -46.5432 },
+    cameraModel: "SENTINELA-H-CAMERAMODEL",
+    createDate: "SENTINELA-H-CREATEDATE",
     metadata: {
       File: { FileType: "JPEG", MIMEType: "image/jpeg", ImageWidth: 4000, ImageHeight: 3000, SHA256: "0".repeat(64), FileModifyDate: "2026:10:24 09:00:00" },
       EXIF: {
@@ -91,6 +99,10 @@ function hostileResponse(): Record<string, unknown> {
         SerialNumber: "SN-998877",
         BodySerialNumber: "BSN-112233",
         DateTimeOriginal: "2026:01:02 03:04:05",
+        GPSLatitude: "SENTINELA-H-EXIFLAT 23 deg 59' S",
+        GPSLatitudeRef: "South",
+        GPSLongitude: "SENTINELA-H-EXIFLNG 46 deg 32' W",
+        GPSLongitudeRef: "West",
       },
       GPS: { GPSLatitude: "23 deg 33' 1.00\" S", GPSLongitude: "46 deg 38' 2.00\" W", GPSAltitude: "760 m" },
       Composite: { GPSPosition: "23.5501 S, 46.6339 W" },
@@ -185,6 +197,12 @@ describe("lista permitida: resposta hostil", () => {
       "Todos os direitos",
       "Ps256",
       "2026:10:24 09:00:00",
+      "SENTINELA",
+      "23.9876",
+      "46.5432",
+      "Rua Secreta",
+      "South",
+      "West",
     ]) {
       assert.equal(dump.includes(secret), false, `vazou: ${secret}`);
     }
@@ -328,6 +346,8 @@ describe("lista permitida: tipos inesperados", () => {
     const signals = extractSignals(
       exifSuccess({
         mimeType: 42,
+        dimensions: 42, // as três fontes de dimensões com tipo errado
+
         metadata: {
           File: { FileType: { a: 1 }, MIMEType: "image/png", ImageWidth: "8192", ImageHeight: -5 },
           EXIF: { Make: 42, Model: "Modelo", DateTimeOriginal: 20200101 },
@@ -366,5 +386,184 @@ describe("lista permitida: tipos inesperados", () => {
       ingredientCount: null,
       remoteHost: null,
     });
+  });
+});
+
+describe("lista permitida: resposta no formato real da ExifTools", () => {
+  test("dourado: o resultado é exatamente o esperado", () => {
+    assert.deepEqual(extractSignals(exifRealResponse(), SHA), {
+      fileType: "JPEG",
+      mimeType: "image/jpeg",
+      width: 640,
+      height: 480,
+      sha256: SHA,
+      dates: [
+        { tag: "EXIF:DateTimeOriginal", value: "2021:02:03 04:05:00" },
+        { tag: "EXIF:CreateDate", value: "2021:02:03 04:05:06" },
+        { tag: "EXIF:ModifyDate", value: "2021:02:04 10:00:00" },
+        { tag: "XMP:CreateDate", value: "2021:02:03 04:05:06" },
+        { tag: "XMP:ModifyDate", value: "2021:02:04 10:00:00" },
+      ],
+      camera: { make: "Fabricante Fictício", model: "Modelo Fictício X1" },
+      software: ["Editor Fictício 1.0", "Ferramenta Fictícia 2.0"],
+      containsLocation: true,
+      containsAuthorship: true,
+      c2pa: null,
+    });
+  });
+
+  test("endereço, coordenadas, autor e identificadores nunca saem, em nenhum nível", () => {
+    const signals = extractSignals(exifRealResponse(), SHA);
+    const dump = JSON.stringify(signals);
+    for (const secret of ["SENTINELA", "12.3456", "45.6789", "12 deg", "45 deg", "Rua Inventada", "588MC9X8", "South", "West", "0.307"]) {
+      assert.equal(dump.includes(secret), false, `vazou: ${secret}`);
+    }
+    for (const key of allKeys(signals)) assert.ok(ALLOWED_KEYS.has(key), `chave fora da lista: ${key}`);
+  });
+});
+
+describe("lista permitida: dimensões", () => {
+  const dims = (response: Record<string, unknown>): [number | null, number | null] => {
+    const { width, height } = extractSignals({ success: true, ...response }, SHA);
+    return [width, height];
+  };
+  const composite = (imageSize: unknown): Record<string, unknown> => ({ metadata: { Composite: { ImageSize: imageSize } } });
+
+  for (const value of ["640x480", "640 x 480", "640×480", " 640x480 "]) {
+    test(`aceita ${JSON.stringify(value)} em Composite.ImageSize e em dimensions`, () => {
+      assert.deepEqual(dims(composite(value)), [640, 480]);
+      assert.deepEqual(dims({ dimensions: value }), [640, 480]);
+    });
+  }
+
+  test("limites: 1x1 e 100000x100000 são aceitos", () => {
+    assert.deepEqual(dims(composite("1x1")), [1, 1]);
+    assert.deepEqual(dims({ dimensions: "100000x100000" }), [100000, 100000]);
+  });
+
+  for (const value of [
+    "0x480",
+    "640x0",
+    "-640x480",
+    "640x-480",
+    "100001x480",
+    "640x100001",
+    "9999999x480",
+    "640.5x480",
+    "abcx480",
+    "640X480",
+    "640x480x3",
+    "640",
+    "640 480",
+    "x480",
+    "",
+    "   ",
+    640,
+    { width: 640, height: 480 },
+    [640, 480],
+    null,
+    true,
+  ]) {
+    test(`recusa ${JSON.stringify(value)} (largura e altura null)`, () => {
+      assert.deepEqual(dims(composite(value)), [null, null]);
+      assert.deepEqual(dims({ dimensions: value }), [null, null]);
+    });
+  }
+
+  test("sem nenhuma fonte: null", () => {
+    assert.deepEqual(dims({}), [null, null]);
+    assert.deepEqual(dims({ metadata: { Composite: {} } }), [null, null]);
+  });
+
+  test("Composite ausente com dimensions presente: usa dimensions", () => {
+    assert.deepEqual(dims({ dimensions: "800x600", metadata: { EXIF: { Make: "X" } } }), [800, 600]);
+  });
+
+  test("Composite inválido com dimensions válido: usa dimensions", () => {
+    assert.deepEqual(dims({ dimensions: "800x600", ...composite("abc") }), [800, 600]);
+  });
+
+  test("as duas fontes válidas: Composite.ImageSize vence", () => {
+    assert.deepEqual(dims({ dimensions: "800x600", ...composite("640x480") }), [640, 480]);
+  });
+
+  test("último recurso: File.ImageWidth/ImageHeight, só com os dois válidos e até 100000", () => {
+    assert.deepEqual(dims({ metadata: { File: { ImageWidth: 1024, ImageHeight: 768 } } }), [1024, 768]);
+    assert.deepEqual(dims({ metadata: { File: { ImageWidth: 100001, ImageHeight: 768 } } }), [null, null]);
+    assert.deepEqual(dims({ metadata: { File: { ImageWidth: 1024, ImageHeight: "768" } } }), [null, null]);
+    assert.deepEqual(dims({ dimensions: "800x600", metadata: { File: { ImageWidth: 1024, ImageHeight: 768 } } }), [800, 600]);
+  });
+});
+
+describe("lista permitida: localização (só o booleano)", () => {
+  const located = (response: Record<string, unknown>): { located: boolean; dump: string } => {
+    const signals = extractSignals({ success: true, ...response }, SHA);
+    return { located: signals.containsLocation, dump: JSON.stringify(signals) };
+  };
+  const NO_VALUE = ["12.3", "45.6", "12 deg", "45 deg", "Rua", "PLUS"];
+
+  for (const [name, response] of [
+    ["só EXIF.GPSLatitude + GPSLongitude", { metadata: { EXIF: { GPSLatitude: "12 deg 20' S", GPSLongitude: "45 deg 40' W" } } }],
+    ["só Composite", { metadata: { Composite: { GPSPosition: "12.3 S, 45.6 W" } } }],
+    ["só XMP", { metadata: { XMP: { GPSLatitude: "12,18.0S" } } }],
+    ["só gpsCoordinates", { gpsCoordinates: { lat: -12.3, lng: -45.6 } }],
+    ["só latitude + longitude", { latitude: -12.3, longitude: -45.6 }],
+    ["só address", { address: "Rua Fictícia, 1" }],
+    ["só addressPlusCode", { addressPlusCode: "PLUS 58XX+YY" }],
+    ["só latitude válida (longitude fora da faixa)", { latitude: -12.3, longitude: 999 }],
+    ["só gpsCoordinates.lng válido", { gpsCoordinates: { lat: 999, lng: -45.6 } }],
+    ["limites da faixa", { latitude: 90, longitude: -180 }],
+  ] as const) {
+    test(`${name}: true, sem nenhum valor na saída`, () => {
+      const result = located(response);
+      assert.equal(result.located, true);
+      for (const value of NO_VALUE) assert.equal(result.dump.includes(value), false, `vazou: ${value}`);
+    });
+  }
+
+  test("nenhuma fonte: false", () => {
+    assert.equal(located({}).located, false);
+    assert.equal(located({ metadata: { EXIF: { Make: "X" }, Composite: { ImageSize: "640x480" } } }).located, false);
+  });
+
+  const invalid: Array<[string, unknown[], (value: unknown) => Record<string, unknown>]> = [
+    ["EXIF.GPSLatitude", ["", "   ", null, {}, [], false], (v) => ({ metadata: { EXIF: { GPSLatitude: v, GPSLongitude: v } } })],
+    ["Composite.GPSPosition", ["", "   ", null, {}, [], false], (v) => ({ metadata: { Composite: { GPSPosition: v } } })],
+    ["XMP.GPSLatitude", ["", "   ", null, {}, [], false], (v) => ({ metadata: { XMP: { GPSLatitude: v } } })],
+    ["latitude", [91, -91, Number.NaN, Number.POSITIVE_INFINITY, "-23.5", null, {}, true], (v) => ({ latitude: v })],
+    ["longitude", [181, -181, Number.NaN, Number.NEGATIVE_INFINITY, "-46.6", null, [], true], (v) => ({ longitude: v })],
+    ["gpsCoordinates", [{ lat: 91, lng: 200 }, { lat: "x" }, { lat: null, lng: "y" }, {}, null, "23,46", [1, 2]], (v) => ({ gpsCoordinates: v })],
+    ["address", ["", "  ", 42, null, {}, ["Rua X"]], (v) => ({ address: v })],
+    ["addressPlusCode", ["", "  ", 42, null, {}], (v) => ({ addressPlusCode: v })],
+  ];
+  for (const [source, values, build] of invalid) {
+    test(`${source} inválido: false`, () => {
+      for (const value of values) assert.equal(located(build(value)).located, false, `${source} = ${String(JSON.stringify(value))}`);
+    });
+  }
+
+  test("uma fonte inválida não anula outra válida", () => {
+    assert.equal(located({ latitude: 999, address: "Rua Fictícia, 1" }).located, true);
+    assert.equal(located({ gpsCoordinates: { lat: 999 }, metadata: { Composite: { GPSPosition: "12.3 S, 45.6 W" } } }).located, true);
+    assert.equal(located({ address: "", metadata: { EXIF: { GPSLatitude: "12 deg S" } } }).located, true);
+  });
+});
+
+describe("lista permitida: autoria do nível superior (só presença)", () => {
+  const authored = (response: Record<string, unknown>): { authored: boolean; dump: string } => {
+    const signals = extractSignals({ success: true, ...response }, SHA);
+    return { authored: signals.containsAuthorship, dump: JSON.stringify(signals) };
+  };
+
+  test("só author: true, sem o nome na saída", () => {
+    const result = authored({ author: "Fulano Fictício" });
+    assert.equal(result.authored, true);
+    assert.equal(result.dump.includes("Fulano"), false);
+  });
+
+  test("author vazio ou de tipo errado, sem outra fonte: false", () => {
+    for (const value of ["", "   ", 42, {}, [], null, true]) {
+      assert.equal(authored({ author: value }).authored, false, String(JSON.stringify(value)));
+    }
   });
 });
