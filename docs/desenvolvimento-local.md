@@ -153,6 +153,7 @@ Saída, em texto:
 Garantias, todas com teste em `api/scripts/try-exiftools.test.ts`:
 - **nunca imprime:** valores brutos (coordenadas, nomes de autor, números de série), a chave, os bytes;
 - **higiene do terminal:** nomes de tags e sinais passam pela mesma higienização do `try-fetch` (sem ANSI, controles e caracteres de formato Unicode);
+- **só a chave e o arquivo do argumento:** do ambiente, o script lê apenas `EXIFTOOLS_API_KEY`, e só pelo ponto de entrada: `main` não recebe nada além da chave. Do disco, lê apenas o arquivo passado como argumento. Isso é verificado por comportamento, não por varredura do código: um ambiente falso com sentinelas e um leitor de arquivos injetado registram cada acesso, e os testes exigem que a chave chegue à ExifTools só no `X-API-Key` e que nenhuma sentinela apareça na saída;
 - **sem rastro:** não grava nada em disco e termina sozinho;
 - **isolamento:** fica fora da imagem Docker (`.dockerignore` remove `api/scripts`), e nenhum módulo de produção o importa.
 

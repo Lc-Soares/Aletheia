@@ -13,10 +13,11 @@ import { stripVTControlCharacters } from "node:util";
 import { createExifToolsClient, type ExtractResult } from "../src/exiftools-client.ts";
 import { extractSignals } from "../src/metadata-allowlist.ts";
 
-// env, readFile, write e endpoint existem só para os testes (servidor falso); não há flag de linha
-// de comando que mude destino, limites ou proteção.
+// env é obrigatório e, no ponto de entrada, vem de scriptEnv: main só enxerga a chave, nunca o resto
+// do ambiente. readFile, write e endpoint existem só para os testes (servidor falso); não há flag de
+// linha de comando que mude destino, limites ou proteção.
 export type MainIo = {
-  env?: Record<string, string | undefined>;
+  env: Record<string, string | undefined>;
   readFile?: (path: string) => Promise<Buffer>;
   write?: (text: string) => void;
   endpoint?: string;
@@ -112,9 +113,14 @@ function formatResult(name: string, contentType: string, bytes: Buffer, result: 
   return `${lines.join("\n")}\n`;
 }
 
+// Do ambiente do processo, só a chave da ExifTools: nenhuma outra variável é lida nem repassada.
+export function scriptEnv(processEnv: Record<string, string | undefined>): { EXIFTOOLS_API_KEY: string | undefined } {
+  return { EXIFTOOLS_API_KEY: processEnv.EXIFTOOLS_API_KEY };
+}
+
 // Devolve o código de saída: 0 quando rodou (uma falha da ExifTools aparece no resultado), 2 para
 // uso errado, chave ausente ou arquivo recusado.
-export async function main(argv: string[], io: MainIo = {}): Promise<number> {
+export async function main(argv: string[], io: MainIo): Promise<number> {
   const write = io.write ?? ((output: string) => void process.stdout.write(output));
   const read = io.readFile ?? ((path: string) => readFile(path));
   if (argv.length === 1 && (argv[0] === "-h" || argv[0] === "--help")) {
@@ -126,8 +132,7 @@ export async function main(argv: string[], io: MainIo = {}): Promise<number> {
     write(USAGE);
     return 2;
   }
-  // Só esta variável do processo é lida; a chave nunca é impressa.
-  const apiKey = (io["env"] === undefined ? process.env["EXIFTOOLS_API_KEY"] : io["env"]["EXIFTOOLS_API_KEY"])?.trim();
+  const apiKey = io.env.EXIFTOOLS_API_KEY?.trim(); // a chave nunca é impressa
   if (!apiKey) {
     write("Defina a variável EXIFTOOLS_API_KEY no ambiente do terminal.\n");
     return 2;
@@ -154,4 +159,4 @@ export async function main(argv: string[], io: MainIo = {}): Promise<number> {
   return 0;
 }
 
-if (import.meta.main) process.exitCode = await main(process.argv.slice(2));
+if (import.meta.main) process.exitCode = await main(process.argv.slice(2), { env: scriptEnv(process.env) });

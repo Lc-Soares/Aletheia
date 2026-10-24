@@ -16,8 +16,7 @@ import {
   startFakeExifTools,
   TEST_EXIFTOOLS_KEY,
 } from "../src/testing.ts";
-import * as script from "./try-exiftools.ts";
-import { contentTypeFor, main, sanitize, tagNames } from "./try-exiftools.ts";
+import { contentTypeFor, main, sanitize, scriptEnv, tagNames } from "./try-exiftools.ts";
 
 const FILE_BYTES = Buffer.from("BYTES-DO-ARQUIVO-QUE-NAO-PODEM-APARECER");
 
@@ -336,16 +335,13 @@ describe("try-exiftools: só lê EXIFTOOLS_API_KEY e o arquivo do argumento (com
   });
 
   test("scriptEnv (ponto de entrada) entrega a main só EXIFTOOLS_API_KEY, sem enumerar o ambiente", () => {
-    const scriptEnv = (script as Record<string, unknown>)["scriptEnv"];
-    assert.equal(typeof scriptEnv, "function", "scriptEnv precisa existir");
-    const build = scriptEnv as (env: Record<string, string | undefined>) => Record<string, unknown>;
     const full = recordingEnv(SENTINELS);
-    const result = build(full.env);
+    const result = scriptEnv(full.env);
     assert.deepEqual(full.accessed(), ["EXIFTOOLS_API_KEY"]);
     assert.deepEqual(result, { EXIFTOOLS_API_KEY: SENTINELS.EXIFTOOLS_API_KEY });
     for (const value of Object.values(OTHERS)) assert.equal(JSON.stringify(result).includes(value), false, value);
     const missing = recordingEnv(OTHERS);
-    assert.deepEqual(build(missing.env), { EXIFTOOLS_API_KEY: undefined });
+    assert.deepEqual(scriptEnv(missing.env), { EXIFTOOLS_API_KEY: undefined });
     assert.deepEqual(missing.accessed(), ["EXIFTOOLS_API_KEY"]);
   });
 
@@ -406,14 +402,12 @@ describe("try-exiftools: fora da imagem e sem relaxar proteção", () => {
     }
   });
 
-  test("usa o cliente de produção, sem testing.ts, sem limites próprios, e só lê EXIFTOOLS_API_KEY do ambiente", () => {
+  // Estrutura, não segredo: o ambiente e os arquivos lidos são verificados pelos testes de
+  // comportamento ("só lê EXIFTOOLS_API_KEY e o arquivo do argumento").
+  test("estrutura: usa o cliente de produção, sem testing.ts e sem limites próprios", () => {
     assert.doesNotMatch(SCRIPT_SOURCE, /testing(\.ts)?["']/);
     assert.match(SCRIPT_SOURCE, /createExifToolsClient\(/);
     assert.doesNotMatch(SCRIPT_SOURCE, /limits\s*:/);
-    assert.doesNotMatch(SCRIPT_SOURCE, /\.env\b(?!\[)|dotenv|readFileSync\([^)]*env/);
-    const envReads = SCRIPT_SOURCE.match(/process\.env\[[^\]]*\]|process\.env\.\w+/g) ?? [];
-    assert.ok(envReads.length > 0);
-    for (const read of envReads) assert.equal(read, 'process.env["EXIFTOOLS_API_KEY"]');
   });
 
   test("o tsconfig e o script de testes da API incluem scripts/", () => {
