@@ -77,7 +77,7 @@ function validateAttributes(tag, attrs) {
 
 /**
  * O mínimo que o mount usa de um elemento e do document (sintaxe de método: o HTMLElement real serve).
- * @typedef {{ setAttribute(name: string, value: string): void, appendChild(child: MountElement): unknown, textContent: string | null }} MountElement
+ * @typedef {{ setAttribute(name: string, value: string): void, appendChild(child: MountElement): unknown, textContent: string | null, focus(): void }} MountElement
  * @typedef {{ createElement(tag: string): MountElement }} MountDocument
  */
 

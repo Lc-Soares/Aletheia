@@ -1,3 +1,4 @@
+import { createCheckFlow } from "./check-form.js";
 import { GOOGLE_CLIENT_ID } from "./config.js";
 import { createSessionCheckUi, createUi } from "./render.js";
 import { createSession } from "./session.js";
@@ -16,13 +17,18 @@ const checkUi = createSessionCheckUi({
   expiry: byId("session-expiry"),
 });
 const baseUi = createUi({ status: byId("status"), signin });
-// O painel "Verificar sessão" aparece depois do primeiro login bem-sucedido.
+// O painel "Verificar sessão" e o formulário do link aparecem depois do primeiro login bem-sucedido.
 const ui = {
   ...baseUi,
   /** @param {string} email */
   showEmail(email) {
     baseUi.showEmail(email);
     checkUi.show();
+    flow.show();
+  },
+  showExpired() {
+    baseUi.showExpired();
+    flow.hide();
   },
 };
 
@@ -58,7 +64,28 @@ const session = createSession({
   checkUi,
 });
 
+const checkForm = byId("check-form");
+const flow = createCheckFlow({
+  elements: {
+    panel: byId("check-panel"),
+    form: checkForm,
+    input: /** @type {HTMLInputElement} */ (byId("check-url")),
+    button: /** @type {HTMLButtonElement} */ (byId("check-submit")),
+    progress: byId("check-progress"),
+    error: byId("check-error"),
+    report: byId("report"),
+  },
+  session,
+  fetchFn: (url, init) => fetch(url, init),
+  doc: document,
+  ui: baseUi,
+});
+
 verifyButton.addEventListener("click", () => void session.verify());
+checkForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void flow.submit();
+});
 
 /** @param {{ credential: string }} response */
 function onCredential(response) {
@@ -66,7 +93,9 @@ function onCredential(response) {
     pendingRenewal(response.credential);
     return;
   }
+  // Login com token novo (não é renovação): limpa mensagens e relatório do usuário anterior.
   session.setToken(response.credential);
+  flow.reset();
   void session.loadMe();
 }
 

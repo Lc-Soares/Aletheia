@@ -57,5 +57,10 @@ export function createUi({ status, signin }) {
     showError() {
       status.textContent = "Não foi possível concluir a verificação. Tente novamente.";
     },
+    // Sessão expirada durante uma checagem: volta ao login, sem repetir o texto de expiração.
+    showLogin() {
+      status.textContent = "";
+      signin.hidden = false;
+    },
   };
 }

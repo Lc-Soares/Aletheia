@@ -1,7 +1,7 @@
 // Cliente de POST /api/check. Autentica pelo fluxo de renovação da sessão (um 401 renova e repete
 // UMA vez; o 401 vem antes de o servidor consumir o limite do plano, então repetir é seguro).
 // Nunca devolve status HTTP cru, corpo desconhecido nem texto de cabeçalho: só as mensagens abaixo
-// ou a `message` do servidor, higienizada. Não escreve em console.
+// ou a `message` do servidor, higienizada. Não usa o console de forma alguma
 
 import { sanitizeText } from "./sanitize.js";
 import { UNAUTHORIZED } from "./session.js";
