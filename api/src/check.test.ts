@@ -325,6 +325,22 @@ describe("POST /api/check: relatório", () => {
         selected: true,
         skipReason: null,
         download: { status: "ok", contentType: "image/jpeg", size: CAPA_BYTES.length, sha256: "a".repeat(64) },
+        metadata: {
+          status: "ok",
+          signals: {
+            fileType: "JPEG",
+            mimeType: "image/jpeg",
+            width: 8192,
+            height: 5464,
+            sha256: "a".repeat(64),
+            dates: [{ tag: "EXIF:DateTimeOriginal", value: "2026:03:15 10:30:00" }],
+            camera: { make: "Canon", model: "Canon EOS R5" },
+            software: [],
+            containsLocation: false,
+            containsAuthorship: false,
+            c2pa: null,
+          },
+        },
       });
       assert.deepEqual(media[1]?.["download"], {
         status: "error",
@@ -332,10 +348,14 @@ describe("POST /api/check: relatório", () => {
         message: "O site respondeu com erro (HTTP 404).",
         httpStatus: 404,
       });
+      assert.equal(media[1]?.["metadata"], null, "download com erro: sem análise de metadados");
       assert.equal(media[2]?.["download"], null);
+      assert.equal(media[2]?.["metadata"], null);
       assert.equal(media[2]?.["skipReason"], "icon");
       const notices = body["notices"] as string[];
       assert.ok(notices.some((notice) => notice.includes("automática e heurística")));
+      assert.ok(notices.includes("A revogação de certificados C2PA não é verificada online."));
+      assert.ok(notices.includes("Um signatário confiável indica quem gerou o arquivo, não que o conteúdo seja verdadeiro."));
     });
   });
 

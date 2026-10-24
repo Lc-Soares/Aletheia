@@ -1,4 +1,10 @@
-export type Config = { googleClientId: string; port: number; fetcherUrl: string; fetcherAudience: string };
+export type Config = {
+  googleClientId: string;
+  port: number;
+  fetcherUrl: string;
+  fetcherAudience: string;
+  exifToolsApiKey: string; // segredo: nunca logar nem repetir em mensagem de erro
+};
 
 function required(env: Record<string, string | undefined>, name: string): string {
   const value = env[name]?.trim();
@@ -37,5 +43,6 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
   // O aud do ID token precisa ser igual, caractere por caractere, ao FETCHER_AUDIENCE do fetcher.
   const fetcherAudience = required(env, "FETCHER_AUDIENCE");
   checkServiceUrl(fetcherAudience, "FETCHER_AUDIENCE");
-  return { googleClientId, port, fetcherUrl: fetcherUrl.href, fetcherAudience };
+  const exifToolsApiKey = required(env, "EXIFTOOLS_API_KEY");
+  return { googleClientId, port, fetcherUrl: fetcherUrl.href, fetcherAudience, exifToolsApiKey };
 }

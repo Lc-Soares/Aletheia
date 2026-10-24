@@ -18,6 +18,18 @@ export const NOTICES = Object.freeze({
   selection:
     "A seleção de mídias é automática e heurística; mídias ignoradas (inclusive logotipos) podem ser relevantes.",
   javascript: "A página possivelmente depende de JavaScript; algumas mídias podem não ter sido vistas.",
+  c2paRevocation: "A revogação de certificados C2PA não é verificada online.",
+  c2paSigner: "Um signatário confiável indica quem gerou o arquivo, não que o conteúdo seja verdadeiro.",
+});
+
+// Situação da análise de metadados de cada mídia. Uma chave inválida (erro nosso) aparece como
+// "indisponível", sem detalhe.
+export const METADATA_MESSAGES = Object.freeze({
+  unavailable: "Análise de metadados indisponível no momento.",
+  unsupported: "Formato não suportado pela análise de metadados.",
+  tooLarge: "Arquivo grande demais para a análise de metadados.",
+  error: "Não foi possível analisar os metadados deste arquivo.",
+  notAnalyzed: "Fora do limite de mídias analisadas por verificação.",
 });
 
 // blocked, network e timeout têm a mesma resposta: um nome que resolve para IP interno (blocked),

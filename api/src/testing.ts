@@ -6,6 +6,8 @@ import type { AddressInfo } from "node:net";
 import { OAuth2Client } from "google-auth-library";
 
 import type { CheckDeps } from "./check.ts";
+import type { DownloadResult, MediaRef } from "./fetcher-contract.ts";
+import type { FetcherOutcome } from "./fetcher-client.ts";
 import { RateLimiter } from "./rate-limit.ts";
 
 export const TEST_CLIENT_ID = "test-client-id.apps.googleusercontent.com";
@@ -185,14 +187,29 @@ export function sendJsonResponse(res: ServerResponse, status: number, body: unkn
   res.end(JSON.stringify(body));
 }
 
-// Dependências da rota /api/check para testes que não a exercitam.
+// Dependências da rota /api/check para testes que não a exercitam. A ExifTools falsa responde
+// sempre com o exemplo da documentação.
 export function testCheckDeps(overrides: Partial<CheckDeps> = {}): CheckDeps {
   return {
     callFetcher: () => Promise.resolve({ kind: "failed", reason: "network" }),
+    extract: () => Promise.resolve({ status: "ok", response: exifSuccess() }),
     limiter: new RateLimiter({ windowMs: 3_600_000 }),
     maxInFlightChecks: 4,
     ...overrides,
   };
+}
+
+// Página com N mídias selecionadas e baixadas (bytes "midia-<i>"), para os testes de sinais.
+export function pageWithDownloads(count: number): FetcherOutcome {
+  const media: MediaRef[] = [];
+  const downloads: DownloadResult[] = [];
+  for (let i = 1; i <= count; i++) {
+    const url = `https://cdn.example/m${i}.jpg`;
+    const bytes = Buffer.from(`midia-${i}`);
+    media.push({ url, kind: "image", source: "img", group: i, score: 20, selected: true, skipReason: null });
+    downloads.push({ url, kind: "image", source: "img", group: i, ok: true, contentType: "image/jpeg", size: bytes.length, sha256: sha256Hex(bytes), bytes });
+  }
+  return { kind: "page", page: { finalUrl: PAGE_URL, title: "Matéria", headline: null, possiblyNeedsJavaScript: false, media, downloads } };
 }
 
 // ---------------------------------------------------------------------------------------------

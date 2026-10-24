@@ -13,7 +13,9 @@ export type LogEntry = {
   durationMs: number;
   outcome: string;
   domainHash: string | null;
-  mediaCount: number | null;
+  mediaCount: number | null; // mídias baixadas
+  analyzedCount: number | null; // mídias com sinais da ExifTools
+  exif: Record<string, number> | null; // contagem por status da ExifTools (ok, unavailable, config_error...)
 };
 
 export type ApiOptions = { verifier: TokenVerifier; log: (entry: LogEntry) => void; check: CheckDeps };
@@ -73,6 +75,8 @@ export function createApiServer(options: ApiOptions): Server {
         outcome,
         domainHash: entry.domainHash ?? null,
         mediaCount: entry.mediaCount ?? null,
+        analyzedCount: entry.analyzedCount ?? null,
+        exif: entry.exif ?? null,
       });
     };
     res.on("finish", () => writeLog(res.statusCode, entry.outcome ?? "-"));

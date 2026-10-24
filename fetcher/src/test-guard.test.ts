@@ -55,7 +55,7 @@ describe("guarda global de unhandled rejection", () => {
 const RUNNER = fileURLToPath(new URL("../../test-support/run-tests.js", import.meta.url));
 const FIXTURES = fileURLToPath(new URL("../../test-support/fixtures/", import.meta.url));
 const WORKSPACES = [
-  { name: "api", globs: ["src/**/*.test.ts"] },
+  { name: "api", globs: ["src/**/*.test.ts", "scripts/**/*.test.ts"] }, // scripts/: try-exiftools (dev)
   { name: "web", globs: ["test/**/*.test.js"] },
   { name: "fetcher", globs: ["src/**/*.test.ts", "scripts/**/*.test.ts"] }, // scripts/: try-fetch (dev)
 ];

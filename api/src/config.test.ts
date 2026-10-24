@@ -8,6 +8,7 @@ const BASE = {
   PORT: "8080",
   FETCHER_URL: "https://fetcher-xyz.a.run.app",
   FETCHER_AUDIENCE: "https://fetcher-xyz.a.run.app",
+  EXIFTOOLS_API_KEY: "chave-de-teste-123",
 };
 
 describe("loadConfig", () => {
@@ -17,7 +18,20 @@ describe("loadConfig", () => {
       port: 8080,
       fetcherUrl: "https://fetcher-xyz.a.run.app/",
       fetcherAudience: "https://fetcher-xyz.a.run.app",
+      exifToolsApiKey: "chave-de-teste-123",
     });
+  });
+
+  test("erro nomeia EXIFTOOLS_API_KEY quando falta ou está vazia, sem mostrar valor", () => {
+    assert.throws(() => loadConfig({ ...BASE, EXIFTOOLS_API_KEY: undefined }), /EXIFTOOLS_API_KEY/);
+    assert.throws(() => loadConfig({ ...BASE, EXIFTOOLS_API_KEY: "   " }), /EXIFTOOLS_API_KEY/);
+  });
+
+  test("a chave da ExifTools nunca aparece em erro de outra variável", () => {
+    assert.throws(
+      () => loadConfig({ ...BASE, PORT: "x" }),
+      (error: unknown) => error instanceof Error && !error.message.includes("chave-de-teste-123"),
+    );
   });
 
   test("erro nomeia GOOGLE_CLIENT_ID quando falta ou está vazia", () => {
