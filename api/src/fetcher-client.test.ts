@@ -43,6 +43,9 @@ async function run(
   }
 }
 
+// Página só com o ícone ignorado: o grupo precisa estar entre 1 e o número de itens.
+const ONLY_ICON = { ...ICONE_REF, group: 1 };
+
 const respond =
   (body: string | Buffer, chunkBytes = 0): FakeFetcherHandler =>
   (_req, res) =>
@@ -98,7 +101,7 @@ describe("cliente do fetcher: resposta válida", () => {
   });
 
   test("página sem mídias selecionadas", async () => {
-    const { outcome } = await run(respond(ndjson([pageLine({ media: [ICONE_REF] }), DONE_LINE])));
+    const { outcome } = await run(respond(ndjson([pageLine({ media: [ONLY_ICON] }), DONE_LINE])));
     assert.ok(outcome.kind === "page");
     assert.deepEqual(outcome.page.downloads, []);
   });
@@ -267,11 +270,11 @@ describe("cliente do fetcher: resposta malformada", () => {
     ["JSON inválido", () => `${JSON.stringify(pageLine())}\n{nao-e-json\n`],
     ["sem a linha done", () => ndjson([pageLine(), capaOk(), fotoBlocked()])],
     ["primeira linha não é page", () => ndjson([capaOk(), pageLine(), DONE_LINE])],
-    ["conteúdo depois de done", () => ndjson([pageLine({ media: [ICONE_REF] }), DONE_LINE, DONE_LINE])],
-    ["linha page duplicada", () => ndjson([pageLine({ media: [ICONE_REF] }), pageLine({ media: [ICONE_REF] }), DONE_LINE])],
+    ["conteúdo depois de done", () => ndjson([pageLine({ media: [ONLY_ICON] }), DONE_LINE, DONE_LINE])],
+    ["linha page duplicada", () => ndjson([pageLine({ media: [ONLY_ICON] }), pageLine({ media: [ONLY_ICON] }), DONE_LINE])],
     ["campo desconhecido na página", () => ndjson([pageLine({ extra: 1 }), DONE_LINE])],
-    ["skipReason desconhecido", () => ndjson([pageLine({ media: [{ ...ICONE_REF, skipReason: "outro" }] }), DONE_LINE])],
-    ["selected sem coerência com skipReason", () => ndjson([pageLine({ media: [{ ...ICONE_REF, selected: true }] }), DONE_LINE])],
+    ["skipReason desconhecido", () => ndjson([pageLine({ media: [{ ...ONLY_ICON, skipReason: "outro" }] }), DONE_LINE])],
+    ["selected sem coerência com skipReason", () => ndjson([pageLine({ media: [{ ...ONLY_ICON, selected: true }] }), DONE_LINE])],
     ["título longo demais", () => ndjson([pageLine({ title: "a".repeat(301), media: [] }), DONE_LINE])],
     ["finalUrl que não é http(s)", () => ndjson([pageLine({ finalUrl: "javascript:alert(1)", media: [] }), DONE_LINE])],
     ["tipo de linha desconhecido", () => ndjson([pageLine(), { type: "outra" }, DONE_LINE])],

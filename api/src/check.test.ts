@@ -217,13 +217,19 @@ describe("POST /api/check: limite por usuário e capacidade", () => {
 
   test("acima do teto de checagens em andamento → 503, sem gastar cota", async () => {
     let release = (): void => {};
+    let entered = (): void => {};
     const gate = new Promise<void>((resolve) => (release = resolve));
+    const inside = new Promise<void>((resolve) => (entered = resolve));
     const limiter = new RateLimiter({ windowMs: 3_600_000 });
+    const callFetcher: FetcherCall = () => {
+      entered();
+      return gate.then(() => fetchedPage());
+    };
     await withApi(
-      { maxInFlightChecks: 1, limiter, callFetcher: () => gate.then(() => fetchedPage()) },
+      { maxInFlightChecks: 1, limiter, callFetcher },
       async (api) => {
         const first = post(api, { url: PAGE_URL });
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await inside; // a primeira checagem já ocupa a vaga
         const second = await post(api, { url: PAGE_URL }, { token: OTHER });
         assert.equal(second.status, 503);
         assert.equal(second.headers.get("retry-after"), "5");
@@ -379,8 +385,11 @@ describe("POST /api/check: relatório", () => {
 
   test("usuário que fecha a conexão cancela a chamada ao fetcher", async () => {
     let aborted = false;
+    let entered = (): void => {};
+    const inside = new Promise<void>((resolve) => (entered = resolve));
     const callFetcher: FetcherCall = (_url, signal) =>
       new Promise((resolve) => {
+        entered();
         signal.addEventListener("abort", () => {
           aborted = true;
           resolve({ kind: "aborted" });
@@ -389,7 +398,7 @@ describe("POST /api/check: relatório", () => {
     await withApi({ callFetcher }, async (api) => {
       const controller = new AbortController();
       const pending = post(api, { url: PAGE_URL }, { signal: controller.signal }).catch(() => null);
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await inside;
       controller.abort();
       await pending;
       for (let i = 0; i < 50 && !aborted; i++) await new Promise((resolve) => setTimeout(resolve, 10));
