@@ -156,6 +156,7 @@ Os riscos mais altos são jurídicos (registros de acesso e LGPD), a dependênci
 **A confirmar antes de implementar**
 
 - Limites de requisição, preço, retenção de dados e SLA da ExifTools, e onde ela processa os dados.
+- Geocodificação pela ExifTools (pendência de 24/10/2026): a resposta inclui `address` e `addressPlusCode`, derivados do GPS. A API descarta os dois, mas não sabemos se a ExifTools usa um terceiro para geocodificar. Levar à revisão jurídica e, se possível, perguntar à ExifTools (nota 9 de `docs/politica-privacidade.md`).
 - Termos de uso comercial do Web Risk e da Safe Browsing.
 - Exigência de faturamento no Firebase para encaminhar requisições ao Cloud Run.
 - Enquadramento do projeto no Marco Civil (artigo 15) e necessidade de encarregado de dados na LGPD.
