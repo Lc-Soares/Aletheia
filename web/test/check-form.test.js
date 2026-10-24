@@ -50,6 +50,7 @@ function setup({ fetchFn, renewToken = async () => null, token = TOKEN_1, sessio
     progress: { textContent: "" },
     error,
     report: createFakeElement("div"),
+    download: { hidden: true },
   };
   const sessionElements = { panel: { hidden: true }, button: { disabled: false }, status: { textContent: "" }, expiry: { textContent: "" } };
   const session =
@@ -377,6 +378,47 @@ describe("fluxo: sessão", () => {
     assert.equal(elements.form.hidden, false);
     flow.hide();
     assert.equal(elements.panel.hidden, true);
+  });
+});
+
+describe("fluxo: botão Baixar JSON", () => {
+  test("aparece só com um relatório na tela", async () => {
+    const { flow, elements } = setup();
+    assert.equal(elements.download.hidden, true);
+    await flow.submit();
+    assert.equal(elements.download.hidden, false);
+    assert.equal(flow.getReport()?.url, LINK);
+  });
+
+  test("some ao começar outra checagem, em erro, resposta inesperada, renderização falha e novo login", async () => {
+    const pending = deferred();
+    let calls = 0;
+    const { flow, elements } = setup({ fetchFn: () => (++calls === 1 ? Promise.resolve(response(200, apiExample())) : pending.promise) });
+    await flow.submit();
+    assert.equal(elements.download.hidden, false);
+    const second = flow.submit();
+    await flush();
+    assert.equal(elements.download.hidden, true);
+    pending.resolve(response(503, {}));
+    await second;
+    assert.equal(elements.download.hidden, true);
+
+    const unexpected = setup({ fetchFn: async () => response(200, {}) });
+    await unexpected.flow.submit();
+    assert.equal(unexpected.elements.download.hidden, true);
+
+    const ok = setup();
+    await ok.flow.submit();
+    ok.flow.reset();
+    assert.equal(ok.elements.download.hidden, true);
+  });
+
+  test("o relatório guardado para o download é o da tela (já higienizado)", async () => {
+    const body = apiExample();
+    body.page.title = "Título‮oculto";
+    const { flow } = setup({ fetchFn: async () => response(200, body) });
+    await flow.submit();
+    assert.equal(flow.getReport()?.report.page.title, "Títulooculto");
   });
 });
 

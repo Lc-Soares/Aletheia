@@ -40,6 +40,7 @@ export function validateLink(raw) {
  * @property {{ textContent: string | null }} progress Região aria-live.
  * @property {{ textContent: string | null, hidden: boolean | string, focus(): void }} error
  * @property {import("./report-view.js").Container} report
+ * @property {{ hidden: boolean | string }} download Botão "Baixar JSON": só aparece com um relatório na tela.
  */
 
 /**
@@ -57,6 +58,7 @@ export function createCheckFlow({ elements, session, fetchFn, doc, ui }) {
 
   function clearReport() {
     elements.report.replaceChildren();
+    elements.download.hidden = true;
     current = null;
   }
 
@@ -83,7 +85,10 @@ export function createCheckFlow({ elements, session, fetchFn, doc, ui }) {
       return;
     }
     const rendered = renderReport(elements.report, report, doc);
-    if (rendered.ok) current = { report, url };
+    if (rendered.ok) {
+      current = { report, url };
+      elements.download.hidden = false;
+    }
     rendered.focusTarget.focus();
   }
 

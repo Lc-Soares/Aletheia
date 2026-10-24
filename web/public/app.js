@@ -1,6 +1,7 @@
 import { createCheckFlow } from "./check-form.js";
 import { GOOGLE_CLIENT_ID } from "./config.js";
 import { createSessionCheckUi, createUi } from "./render.js";
+import { saveReportJson } from "./report-json.js";
 import { createSession } from "./session.js";
 
 const RENEW_TIMEOUT_MS = 15_000;
@@ -74,6 +75,7 @@ const flow = createCheckFlow({
     progress: byId("check-progress"),
     error: byId("check-error"),
     report: byId("report"),
+    download: byId("download-json"),
   },
   session,
   fetchFn: (url, init) => fetch(url, init),
@@ -85,6 +87,12 @@ verifyButton.addEventListener("click", () => void session.verify());
 checkForm.addEventListener("submit", (event) => {
   event.preventDefault();
   void flow.submit();
+});
+// "Baixar JSON": gerado aqui, no navegador, a partir do relatório que está na tela.
+byId("download-json").addEventListener("click", () => {
+  const current = flow.getReport();
+  if (current === null) return;
+  saveReportJson(current, { doc: document, urlApi: URL, now: () => new Date(), schedule: (fn, ms) => setTimeout(fn, ms) });
 });
 
 /** @param {{ credential: string }} response */
