@@ -10,3 +10,14 @@ main {
   margin: 4rem auto;
   padding: 0 1rem;
 }
+
+.session-check {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.session-check[hidden] {
+  display: none;
+}

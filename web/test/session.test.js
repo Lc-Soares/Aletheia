@@ -126,7 +126,7 @@ const EMAIL = "pessoa@exemplo.com";
 const jwt = (sub) => `${b64url({ alg: "RS256" })}.${b64url({ sub, email: EMAIL, exp: 2_000_000_000 })}.assinatura-${sub}`;
 const TOKEN_1 = jwt("1");
 const TOKEN_2 = jwt("2");
-const flush = () => new Promise((resolve) => setImmediate(resolve));
+const flush = () => new Promise((resolve) => globalThis.setImmediate(resolve));
 
 /**
  * @param {{ fetchFn?: () => Promise<FakeResponse>, responses?: FakeResponse[], renewToken?: () => Promise<string | null> }} options
