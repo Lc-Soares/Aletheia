@@ -13,6 +13,8 @@ const RENEW_DEADLINE_MS = 15_000;
  * @property {() => void} showError
  */
 
+/** @typedef {ReturnType<typeof createSession>} Session */
+
 /** @typedef {"active" | "renewed" | "expired" | "error"} CheckResult */
 /** @typedef {CheckResult | "none"} LoadResult */
 
@@ -27,6 +29,9 @@ const RENEW_DEADLINE_MS = 15_000;
 
 /** @type {CheckUi} */
 const NO_CHECK_UI = { show() {}, setBusy() {}, showResult() {}, showExpiry() {}, clearResult() {} };
+
+/** Resultado de uma tentativa que levou 401: pede renovação do token. */
+export const UNAUTHORIZED = Symbol("unauthorized");
 
 /**
  * Resolve com null se a promessa não responder dentro do prazo (ou rejeitar).
@@ -73,7 +78,7 @@ export function createSession({ fetchFn, renewToken, ui, checkUi = NO_CHECK_UI, 
   }
 
   /** @returns {Promise<string | null>} */
-  async function renew() {
+  async function doRenew() {
     log("[sessão] renovação iniciada");
     const renewed = await withDeadline(renewToken(), RENEW_DEADLINE_MS);
     if (renewed === null) {
@@ -85,30 +90,54 @@ export function createSession({ fetchFn, renewToken, ui, checkUi = NO_CHECK_UI, 
     return renewed;
   }
 
+  // Renovação de voo único: o app só tem um espaço para o callback do Google (pendingRenewal em
+  // app.js). Duas chamadas que levam 401 ao mesmo tempo esperam a mesma renovação.
+  /** @type {Promise<string | null> | null} */
+  let renewing = null;
+  /** @returns {Promise<string | null>} */
+  function renew() {
+    renewing ??= doRenew().finally(() => {
+      renewing = null;
+    });
+    return renewing;
+  }
+
   /**
-   * @param {boolean} canRenew
-   * @returns {Promise<LoadResult>}
+   * Chamada autenticada com o fluxo único de renovação: tenta com o token em memória; se a tentativa
+   * devolver UNAUTHORIZED, renova e repete UMA vez. Exceções da tentativa (rede) passam adiante.
+   * @template T
+   * @param {(token: string) => Promise<T | typeof UNAUTHORIZED>} attempt
+   * @returns {Promise<{ ok: true, value: T, renewed: boolean } | { ok: false }>}
    */
-  async function loadMe(canRenew = true) {
-    if (token === null) return "none";
+  async function withToken(attempt) {
+    if (token === null) return { ok: false };
+    const first = await attempt(token);
+    if (first !== UNAUTHORIZED) return { ok: true, value: first, renewed: false };
+    storeToken(null);
+    const renewed = await renew();
+    if (renewed === null) return { ok: false };
+    storeToken(renewed);
+    const second = await attempt(renewed);
+    if (second === UNAUTHORIZED) {
+      storeToken(null);
+      return { ok: false };
+    }
+    return { ok: true, value: second, renewed: true };
+  }
+
+  /**
+   * @param {string} current
+   * @returns {Promise<"active" | "error" | typeof UNAUTHORIZED>}
+   */
+  async function requestMe(current) {
     let response;
     try {
-      response = await fetchFn("/api/me", { headers: { Authorization: `Bearer ${token}` } });
+      response = await fetchFn("/api/me", { headers: { Authorization: `Bearer ${current}` } });
     } catch {
       ui.showError();
       return "error";
     }
-    if (response.status === 401) {
-      storeToken(null);
-      const renewed = canRenew ? await renew() : null;
-      if (renewed === null) {
-        ui.showExpired();
-        return "expired";
-      }
-      storeToken(renewed);
-      const retried = await loadMe(false);
-      return retried === "active" ? "renewed" : retried;
-    }
+    if (response.status === 401) return UNAUTHORIZED;
     if (!response.ok) {
       ui.showError();
       return "error";
@@ -120,6 +149,17 @@ export function createSession({ fetchFn, renewToken, ui, checkUi = NO_CHECK_UI, 
     }
     ui.showEmail(body.email);
     return "active";
+  }
+
+  /** @returns {Promise<LoadResult>} */
+  async function loadMe() {
+    if (token === null) return "none";
+    const outcome = await withToken(requestMe);
+    if (!outcome.ok) {
+      ui.showExpired();
+      return "expired";
+    }
+    return outcome.value === "active" && outcome.renewed ? "renewed" : outcome.value;
   }
 
   // Botão "Verificar sessão": repete /api/me pelo mesmo fluxo (no máximo uma renovação).
@@ -137,5 +177,5 @@ export function createSession({ fetchFn, renewToken, ui, checkUi = NO_CHECK_UI, 
     }
   }
 
-  return { setToken, loadMe, verify };
+  return { setToken, loadMe, verify, withToken };
 }
