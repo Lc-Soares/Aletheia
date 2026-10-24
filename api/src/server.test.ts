@@ -8,18 +8,19 @@ import { after, before, describe, mock, test } from "node:test";
 
 import type { TokenVerifier } from "./auth.ts";
 import { createApiServer, shutdown, type LogEntry } from "./server.ts";
+import { testCheckDeps } from "./testing.ts";
 
 const GOOD_TOKEN = "good.token.value";
 const GENERIC_401 = { error: "Não autorizado" };
 
 const verifier: TokenVerifier = async (token) => {
-  if (token === GOOD_TOKEN) return { email: "pessoa@example.com" };
+  if (token === GOOD_TOKEN) return { email: "pessoa@example.com", sub: "1234567890" };
   throw new Error(`motivo interno com ${token}`);
 };
 
 describe("API HTTP", () => {
   const logs: LogEntry[] = [];
-  const server = createApiServer({ verifier, log: (entry) => logs.push(entry) });
+  const server = createApiServer({ verifier, log: (entry) => logs.push(entry), check: testCheckDeps() });
   let base = "";
 
   before(async () => {
@@ -51,7 +52,7 @@ describe("API HTTP", () => {
     });
   }
 
-  test("GET /api/me com token válido devolve apenas { email }", async () => {
+  test("GET /api/me com token válido devolve apenas { email } (sem o sub)", async () => {
     const res = await fetch(`${base}/api/me`, { headers: { Authorization: `Bearer ${GOOD_TOKEN}` } });
     assert.equal(res.status, 200);
     assert.deepEqual(await res.json(), { email: "pessoa@example.com" });
@@ -80,7 +81,7 @@ describe("API HTTP", () => {
     await fetch(`${base}/caminho/${marker}`);
     const dump = JSON.stringify(logs);
     assert.ok(logs.length >= 3);
-    for (const secret of [GOOD_TOKEN, marker, "alvo.example", "pessoa", "example.com"]) {
+    for (const secret of [GOOD_TOKEN, marker, "alvo.example", "pessoa", "example.com", "1234567890"]) {
       assert.equal(dump.includes(secret), false, `log vazou: ${secret}`);
     }
   });
@@ -117,13 +118,13 @@ describe("API HTTP", () => {
 
 describe("endurecimento do servidor", () => {
   test("define limites de tempo e de cabeçalho", () => {
-    const server = createApiServer({ verifier, log: () => {} });
+    const server = createApiServer({ verifier, log: () => {}, check: testCheckDeps() });
     assert.ok(server.headersTimeout > 0 && server.headersTimeout <= 10_000);
     assert.ok(server.requestTimeout > 0 && server.requestTimeout <= 30_000);
   });
 
   test("cabeçalho acima do limite é recusado (431)", async () => {
-    const server = createApiServer({ verifier, log: () => {} });
+    const server = createApiServer({ verifier, log: () => {}, check: testCheckDeps() });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     try {
       const port = (server.address() as AddressInfo).port;
@@ -143,7 +144,7 @@ describe("endurecimento do servidor", () => {
   });
 
   test("shutdown fecha o servidor e resolve", async () => {
-    const server = createApiServer({ verifier, log: () => {} });
+    const server = createApiServer({ verifier, log: () => {}, check: testCheckDeps() });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     await shutdown(server, 1000);
     assert.equal(server.listening, false);
