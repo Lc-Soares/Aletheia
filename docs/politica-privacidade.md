@@ -50,7 +50,7 @@ Compartilhamos dados apenas com os fornecedores que executam partes da análise,
 | Google Cloud Vision | Busca reversa de imagens | Imagem extraída da página | \[CONFIRMAR\] |
 | Google Web Risk | Verificar se o link é malicioso | Endereço da página | \[CONFIRMAR\] |
 | Google Fact Check Tools | Buscar checagens já publicadas | Texto da afirmação extraído da página | \[CONFIRMAR\] |
-| ExifTools | Leitura de metadados e verificação de assinaturas de autenticidade (C2PA) | Endereço da mídia ou o arquivo | \[CONFIRMAR PAÍS\] |
+| ExifTools | Leitura de metadados e verificação de assinaturas de autenticidade (C2PA) | O arquivo da mídia (nunca o endereço) | \[CONFIRMAR PAÍS\] |
 | Site analisado | Origem do conteúdo | Nosso servidor acessa a página que você informou, e o site pode registrar esse acesso | Conforme o próprio site |
 
 Podem ser acionados outros fornecedores no futuro, e esta política será atualizada nesse caso.
