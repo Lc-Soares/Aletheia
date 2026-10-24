@@ -2,7 +2,7 @@
 
 Serviço Node.js no Cloud Run, atrás do Firebase Hosting (`/api/**`). Valida o login, aplica o limite do plano, chama o fetcher e devolve o relatório. É stateless: nada vai para disco ou banco, e os bytes das mídias só existem na memória durante a requisição.
 
-Fase 4a: `POST /api/check` devolve página e mídias, sem os sinais da ExifTools. Fase 4b: o cliente ExifTools e a lista permitida estão prontos e testados, mas ainda não são usados pela rota (isso entra na 4c). Ver "ExifTools", abaixo.
+Fase 4 (4a, 4b e 4c): `POST /api/check` devolve a página, as mídias e, para cada mídia baixada, os sinais de metadados extraídos pela ExifTools (lista permitida). Nunca há veredito de verdadeiro ou falso. A resposta é um único JSON no fim; o envio por SSE fica para depois.
 
 ## Rotas
 
@@ -23,7 +23,8 @@ Ordem de processamento (`api/src/check.ts`):
 2. confere o teto de checagens em andamento na instância (4);
 3. lê e valida o corpo (um corpo inválido não gasta cota);
 4. consome o limite do plano;
-5. chama o fetcher.
+5. chama o fetcher;
+6. manda cada mídia baixada à ExifTools (ver "Sinais por mídia").
 
 ### Resposta 200
 
@@ -32,19 +33,49 @@ Ordem de processamento (`api/src/check.ts`):
   "page": { "finalUrl": "...", "title": "...", "headline": "...", "possiblyNeedsJavaScript": false },
   "media": [
     { "url": "...", "kind": "image", "source": "og:image", "group": 1, "score": 100, "selected": true, "skipReason": null,
-      "download": { "status": "ok", "contentType": "image/jpeg", "size": 12345, "sha256": "<hex>" } },
+      "download": { "status": "ok", "contentType": "image/jpeg", "size": 12345, "sha256": "<hex>" },
+      "metadata": { "status": "ok", "signals": { "fileType": "JPEG", "mimeType": "image/jpeg", "width": 8192, "height": 5464,
+        "sha256": "<hex>", "dates": [{ "tag": "EXIF:DateTimeOriginal", "value": "2026:03:15 10:30:00" }],
+        "camera": { "make": "Canon", "model": "Canon EOS R5" }, "software": [], "containsLocation": false,
+        "containsAuthorship": false, "c2pa": null } } },
     { "url": "...", "kind": "image", "source": "img", "group": 2, "score": 20, "selected": true, "skipReason": null,
-      "download": { "status": "error", "error": "unreachable", "message": "Não foi possível acessar este endereço." } },
-    { "url": "...", "kind": "image", "source": "img", "group": 3, "score": -70, "selected": false, "skipReason": "icon", "download": null }
+      "download": { "status": "error", "error": "unreachable", "message": "Não foi possível acessar este endereço." },
+      "metadata": null },
+    { "url": "...", "kind": "image", "source": "img", "group": 3, "score": -70, "selected": false, "skipReason": "icon",
+      "download": null, "metadata": null }
   ],
-  "notices": ["A seleção de mídias é automática e heurística; ..."]
+  "notices": [
+    "A seleção de mídias é automática e heurística; ...",
+    "A revogação de certificados C2PA não é verificada online.",
+    "Um signatário confiável indica quem gerou o arquivo, não que o conteúdo seja verdadeiro."
+  ]
 }
 ```
 
 - `media` traz todas as referências que o fetcher listou (até 200), com `group`, `score`, `selected` e `skipReason` como o fetcher entrega (`docs/fetcher.md`). `download` é `null` para as não selecionadas.
 - Os bytes das mídias nunca vão na resposta.
 - `title`, `headline` e as URLs vêm de terceiros. Quem exibir esse texto precisa escapá-lo.
-- `notices` sempre traz o aviso de seleção heurística e, quando `possiblyNeedsJavaScript` é verdadeiro, o aviso de que a página possivelmente depende de JavaScript. O sinal é uma possibilidade, nunca um fato.
+- `metadata` é `null` para as mídias não selecionadas e para as que falharam no download. Para as baixadas, ver "Sinais por mídia".
+- `notices` sempre traz o aviso de seleção heurística e os dois avisos fixos de C2PA. Quando `possiblyNeedsJavaScript` é verdadeiro, traz também o aviso de que a página possivelmente depende de JavaScript. O sinal é uma possibilidade, nunca um fato.
+
+### Sinais por mídia
+
+`api/src/analyze.ts`. Cada mídia baixada vai à ExifTools, e cada uma tem o próprio `metadata.status`: a falha de uma mídia não derruba a checagem nem as outras mídias.
+
+| `metadata.status` | Quando | `message` |
+| --- | --- | --- |
+| `ok` | a ExifTools respondeu; vem com `signals` (lista permitida, ver "ExifTools") | — |
+| `unavailable` | 429, 5xx, timeout, erro de rede, prazo total esgotado, ou chave inválida (erro nosso, só no log) | Análise de metadados indisponível no momento. |
+| `unsupported` | 415 | Formato não suportado pela análise de metadados. |
+| `too_large` | 413 | Arquivo grande demais para a análise de metadados. |
+| `error` | 400, outros 4xx, resposta fora do formato | Não foi possível analisar os metadados deste arquivo. |
+| `not_analyzed` | passou de `maxMediaPerCheck` do plano (8) | Fora do limite de mídias analisadas por verificação. |
+
+- **No máximo 2 chamadas simultâneas** à ExifTools por checagem, em fila.
+- **Chave inválida (401/403):** as chamadas que ainda não começaram são puladas, para não insistir com uma chave recusada. O usuário vê "indisponível"; o log registra `config_error`.
+- **Prazo total de 50 s** por checagem, contado desde a chegada da requisição, porque o Firebase Hosting corta em 60 s. O fetcher tem prazo próprio de 40 s, e a ExifTools fica com o que sobrar. Esgotado o prazo, as mídias pendentes ficam `unavailable` e a resposta sai assim mesmo.
+- **Cancelamento:** se o usuário fecha a conexão, as chamadas à ExifTools são canceladas.
+- **Memória:** os bytes das mídias só existem na memória da requisição. Eles vão para a ExifTools e são soltos ao fim da resposta. Nunca vão para disco, log ou resposta.
 
 ### Erros e mensagens
 
@@ -97,7 +128,7 @@ O 504 vale para qualquer prazo esgotado antes da linha `done`, inclusive quando 
 
 - **Só o arquivo.** A API envia os bytes já baixados pelo fetcher, em multipart, num único campo `file`, com nome genérico derivado do content-type (`media.jpg`, `media.mov`, `media.bin`…), nunca o nome original. Nunca usa os modos `url` nem `data_url`: a ExifTools não pode buscar nada por conta própria, porque isso contornaria o fetcher e vazaria a URL do usuário. A função do cliente nem recebe URL.
 - **Endereço fixo:** `https://exiftools.com/api/v1/extract`, sem variável de ambiente para trocar o destino. Os testes passam o endereço do servidor falso pelas opções do cliente.
-- **Chave só no cabeçalho `X-API-Key`**, nunca em `?key=`. Ela vem de `EXIFTOOLS_API_KEY` (obrigatória a partir da 4c) e nunca aparece em log, resultado ou mensagem de erro.
+- **Chave só no cabeçalho `X-API-Key`**, nunca em `?key=`. Ela vem de `EXIFTOOLS_API_KEY` (obrigatória: sem ela a API não sobe) e nunca aparece em log, resultado ou mensagem de erro.
 - **Redirecionamento:** não é seguido (`redirect: "manual"`), porque o cabeçalho com a chave iria junto para outro host. Um redirecionamento vira `invalid`.
 - **Prazo:** 15 s por chamada, limitado pelo prazo total da checagem.
 - **Resposta:** até 2 MiB. Um `Content-Length` maior é recusado sem ler o corpo, e a leitura em fluxo para no primeiro pedaço que passa do limite.
@@ -152,7 +183,7 @@ HTML continua sendo texto: quem exibe escapa.
 - vídeo (grupo `QuickTime`), que não aparece documentado e fica de fora por enquanto;
 - a estrutura de `ingredients`.
 
-**Avisos fixos no relatório (a partir da 4c):** "A revogação de certificados C2PA não é verificada online." e "Um signatário confiável indica quem gerou o arquivo, não que o conteúdo seja verdadeiro."
+**Avisos fixos no relatório:** "A revogação de certificados C2PA não é verificada online." e "Um signatário confiável indica quem gerou o arquivo, não que o conteúdo seja verdadeiro."
 
 **Retenção do lado da ExifTools:** os resultados são recuperáveis por UUID, o que indica que a ExifTools guarda alguma coisa. A API nunca repassa o UUID, mas o arquivo enviado pode conter GPS e autoria. Ver `docs/politica-privacidade.md`.
 
@@ -171,7 +202,7 @@ HTML continua sendo texto: quem exibe escapa.
 
 | Parâmetro | Valor | Motivo |
 | --- | --- | --- |
-| Checagens em andamento por instância | 4 (acima disso, 503) | Cada checagem pode segurar cerca de 110 MiB (estimativa): até 60 MiB de mídia decodificada, mais uma linha de até 21 MiB em base64 e os buffers da leitura. |
+| Checagens em andamento por instância | 4 (acima disso, 503) | Cada checagem pode segurar cerca de 110 MiB (estimativa): até 60 MiB de mídia decodificada, mais uma linha de até 21 MiB em base64 e os buffers da leitura. Durante o envio à ExifTools, somam-se até 2 cópias de mídia de 15 MiB (o corpo multipart), depois que o stream do fetcher já foi liberado. |
 | Memória | 1 GiB | 4 × 110 MiB mais o processo e a folga para GC. |
 | `--concurrency` | 4 | Igual ao teto do código. Com um valor maior, o Cloud Run mandaria requisições para uma instância que responde 503, em vez de abrir outra. |
 | `--max-instances` | 2 | Contador do limite por instância (acima). |
@@ -187,14 +218,17 @@ HTML continua sendo texto: quem exibe escapa.
 | `PORT` | sim | definida pelo Cloud Run |
 | `FETCHER_URL` | sim | URL do serviço do fetcher. https, ou `http://localhost` em desenvolvimento; sem usuário/senha, query ou fragmento |
 | `FETCHER_AUDIENCE` | sim | `aud` do ID token de serviço; igual ao `FETCHER_AUDIENCE` do fetcher. Mesma regra de esquema |
+| `EXIFTOOLS_API_KEY` | sim | chave da ExifTools. Em produção, vem do Secret Manager; nunca vai para código, log ou commit |
 
 Os erros de configuração nomeiam a variável e nunca repetem o valor.
 
 ## Logs
 
-Uma linha JSON por requisição: `method`, `route` (normalizada), `status`, `durationMs`, `outcome`, `domainHash` e `mediaCount` (mídias baixadas).
+Uma linha JSON por requisição: `method`, `route` (normalizada), `status`, `durationMs`, `outcome`, `domainHash`, `mediaCount` (mídias baixadas), `analyzedCount` (mídias com sinais) e `exif` (contagem por status da ExifTools: `ok`, `unavailable`, `unsupported`, `too_large`, `invalid`, `config_error`, `not_analyzed`, `skipped`).
 
-- **Nunca aparecem:** URL, caminho, corpo, token, e-mail, `sub` nem bytes.
+`config_error` em `exif` significa que a ExifTools recusou a chave: é erro de configuração nosso e precisa de ação.
+
+- **Nunca aparecem:** URL, caminho, corpo, token, e-mail, `sub`, chave da ExifTools nem bytes.
 - **`domainHash`:** HMAC-SHA-256 truncado do hostname, com chave aleatória do processo, igual ao do fetcher.
 - **`outcome`:** inclui a categoria interna exata, que nunca vai para o usuário. Valores:
   - `ok`;
