@@ -197,7 +197,10 @@ describe("cliente ExifTools: respostas", () => {
 
 describe("cliente ExifTools: prazo, rede e tamanho", () => {
   test("ExifTools que não responde: unavailable no prazo da chamada", async () => {
-    const { result, elapsedMs, requests } = await run(() => {}, { limits: { ...FAST, callTimeoutMs: 200 }, budgetMs: 300 });
+    const { result, elapsedMs, requests } = await run(() => {}, {
+      limits: { ...FAST, callTimeoutMs: 200, retryReserveMs: 200 },
+      budgetMs: 300,
+    });
     assert.deepEqual(result, { status: "unavailable" });
     assert.equal(requests, 1, "a segunda tentativa não cabe no prazo");
     assert.ok(elapsedMs < 2_000, `levou ${Math.round(elapsedMs)} ms`);
@@ -273,7 +276,9 @@ describe("cliente ExifTools: a chave nunca vaza", () => {
         reply(500, { error: TEST_EXIFTOOLS_KEY }),
         reply(415, {}),
         (_req, res) => void res.writeHead(200).end(`não-json ${TEST_EXIFTOOLS_KEY}`),
-        (_req, res) => res.destroy(),
+        (_req, res) => {
+          res.destroy();
+        },
       ];
       for (const handler of handlers) {
         const { result } = await run(handler);
