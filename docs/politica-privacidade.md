@@ -34,7 +34,7 @@ O link e o conteúdo da página existem apenas na memória do nosso servidor enq
 
 1. Você entra com sua conta Google.
 2. Você informa o link. Nosso servidor acessa a página e baixa as mídias dela, uma única vez.
-3. Enviamos as mídias, ou o endereço delas, aos serviços de análise listados na seção 4.
+3. Enviamos as mídias aos serviços de análise listados na seção 4; o endereço da página só é enviado onde a tabela da seção 4 indica.
 4. O resultado chega ao seu navegador, que monta o relatório.
 5. Nosso servidor descarta tudo. Não guardamos o link, as mídias nem o resultado.
 

@@ -172,7 +172,7 @@ Os testes usam resolvedor e transporte injetados. A única "política de teste" 
 | Conexão + TLS + cabeçalhos, por salto | 5 s | Servidor saudável responde cabeçalhos bem antes disso; corta servidores que seguram a conexão. |
 | HTML (redirecionamentos + corpo) | 10 s | O "cerca de 10 s" da arquitetura. |
 | Cada mídia (redirecionamentos + corpo) | 20 s | 15 MiB precisam de banda razoável; 20 s dá cerca de 6 Mbit/s. |
-| Página inteira (HTML + mídias) | 30 s | Cabe no fluxo SSE da API; mídias pendentes viram `timeout`, e o resto do relatório segue. |
+| Página inteira (HTML + mídias) | 30 s | Cabe nos 40 s da fase do fetcher na API e no prazo total de 50 s da resposta JSON (`docs/api.md`); mídias pendentes viram `timeout`, e o resto do relatório segue. |
 | HTML descompactado | 2 MiB | Páginas de notícia raramente passam disso. **Não limita a memória do parse5:** uma página hostil de cerca de 55 KB gera milhões de nós. Quem limita é o heap do worker de extração. |
 | Cada mídia descompactada | 15 MiB | Cobre fotos de câmera e celular em alta resolução e clipes curtos; bem abaixo dos 100 MB da ExifTools. O limite da Cloud Vision ainda deve ser conferido na documentação oficial antes da Fase 5. Vídeos maiores viram `too_large` e entram no relatório como limitação. |
 | Mídia agregada por página | 60 MiB | 8 × 15 MiB daria 120 MiB por requisição; o teto agregado mantém a instância em 1 GiB com concorrência baixa. |

@@ -174,9 +174,9 @@ O fetcher faz requisições reais a partir da sua máquina (ver o aviso do `try-
 
 ### `api/.env.example`
 
-Precisa listar `FETCHER_URL`, `FETCHER_AUDIENCE` e `EXIFTOOLS_API_KEY`, só os nomes e sem valores. Quem atualiza é o desenvolvedor; o agente não toca em arquivos `.env*`.
+Traz só os nomes das variáveis (`GOOGLE_CLIENT_ID`, `FETCHER_URL`, `FETCHER_AUDIENCE`, `EXIFTOOLS_API_KEY`), sem valores. Quem o mantém é o desenvolvedor; o agente não toca em arquivos `.env*`.
 
-**Decisão opcional (não tomada):** hoje o `.gitignore` tem a regra `.env.*`, que também ignora o `api/.env.example`, então ele **não é versionado**. Para versioná-lo como modelo, basta acrescentar `!.env.example` depois da regra `.env.*`. O `.gitignore` não foi alterado.
+**Decisão tomada:** o `api/.env.example` é versionado como modelo, só com os nomes e sem valores. O `.gitignore` tem `!.env.example` depois da regra `.env.*`, que antes também o ignorava.
 
 ## Conferir a ExifTools com um arquivo: `try-exiftools`
 
@@ -187,11 +187,13 @@ Script de desenvolvimento (`api/scripts/try-exiftools.ts`) que envia **um arquiv
 
 Não há opção, flag nem variável que mude destino, limites ou proteção. Serve para conferir se os nomes de tags da lista permitida (GPS, XMP, Composite, `contentCredentials`) batem com o que a ExifTools devolve de verdade.
 
+Com o `secrets.sh` já carregado (ver "Segredos locais"):
+
 ```
-EXIFTOOLS_API_KEY=<sua chave> npm run try-exiftools -w api -- <caminho do arquivo>
+npm run try-exiftools -w api -- <caminho do arquivo>
 ```
 
-O caminho é relativo a `api/`. Formatos aceitos: os mesmos que o fetcher baixa (`.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.avif`, `.heic`, `.heif`, `.tif`, `.tiff`, `.mp4`, `.webm`, `.mov`), até 15 MiB.
+O caminho é relativo a `api/`; caminho absoluto também funciona (no Windows, com barras normais: `C:/Users/...`). Formatos aceitos: os mesmos que o fetcher baixa (`.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.avif`, `.heic`, `.heif`, `.tif`, `.tiff`, `.mp4`, `.webm`, `.mov`), até 15 MiB.
 
 > **Aviso:** o arquivo **sai da sua máquina e vai para a ExifTools**, um serviço de terceiros que guarda resultados (recuperáveis por UUID). Use **só arquivos próprios**, nunca fotos de outras pessoas. Uma foto pode conter localização e autoria. A chave vem só da variável `EXIFTOOLS_API_KEY` do terminal: o script não lê nenhum arquivo de ambiente e nunca imprime a chave.
 

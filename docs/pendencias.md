@@ -27,7 +27,7 @@ Lista única do que falta, atualizada em **24/10/2026**, ao fim da Fase 4. Cada 
 
 ## Validação pendente
 
-- **C2PA com arquivo real.** O repositório `c2pa-org/public-testfiles` estava sem arquivos em 24/10/2026. Gerar uma imagem com Content Credentials ou achar outro conjunto de arquivos. O que falta verificar na ExifTools: `docs/api.md`, "Teste real da ExifTools".
+- **C2PA com arquivo real. Não bloqueante para o primeiro deploy.** Para arquivos sem C2PA, o relatório vale como "não vimos assinatura". O caminho com C2PA real continua **não validado**. O repositório `c2pa-org/public-testfiles` estava sem arquivos em 24/10/2026. Gerar uma imagem com Content Credentials ou achar outro conjunto de arquivos. O que falta verificar na ExifTools: `docs/api.md`, "Teste real da ExifTools".
 
 ## Segurança e operação
 
@@ -40,6 +40,12 @@ Lista única do que falta, atualizada em **24/10/2026**, ao fim da Fase 4. Cada 
   - mídia dentro de `<noscript>` (`docs/fetcher.md`, "Decisões abertas").
 - **Dívida técnica:** criar um workspace compartilhado para o código duplicado entre API e fetcher (`docs/fetcher.md`, "Dívida técnica").
 - **Geocodificação pela ExifTools:** saber se ela usa um terceiro para gerar `address`/`addressPlusCode`. Revisão jurídica (`docs/arquitetura.md`; nota 9 de `docs/politica-privacidade.md`).
+
+## Deploy
+
+- **Guia passo a passo de implantação** em `docs/deploy.md` (a criar). Será escrito à parte, a partir da documentação oficial atual, usando o checklist abaixo e as regras de implantação de `docs/fetcher.md` e `docs/api.md`.
+- **Automação do deploy por GitHub Actions.** Hoje o CI só roda `npm run check`, a auditoria de dependências e o build das imagens, sem push nem deploy.
+- **Orçamento com alerta** no projeto `<ID_DO_PROJETO>` (`docs/arquitetura.md`, abuso e custo).
 
 ## Checklist do primeiro deploy
 
