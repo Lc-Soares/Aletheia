@@ -53,6 +53,7 @@ Ordem de processamento (`api/src/check.ts`):
 ```
 
 - `media` traz todas as referências que o fetcher listou (até 200), com `group`, `score`, `selected` e `skipReason` como o fetcher entrega (`docs/fetcher.md`). `download` é `null` para as não selecionadas.
+- São **uma referência por variante** (cada tamanho de um `srcset` é uma linha). A interface deve **agrupar por `group`** e mostrar uma linha por imagem.
 - Os bytes das mídias nunca vão na resposta.
 - `title`, `headline` e as URLs vêm de terceiros. Quem exibir esse texto precisa escapá-lo.
 - `metadata` é `null` para as mídias não selecionadas e para as que falharam no download. Para as baixadas, ver "Sinais por mídia".
@@ -119,6 +120,7 @@ O 504 vale para qualquer prazo esgotado antes da linha `done`, inclusive quando 
   Qualquer desvio vira 502 genérico.
 - **Corpo de erro do fetcher:** nunca é repassado. Do 422 só se aproveitam a categoria conhecida e o `httpStatus` válido.
 - **Cancelamento:** se o usuário fecha a conexão, a chamada ao fetcher é abortada.
+- **Primeira chamada de cada processo:** localmente, levou cerca de 15 s (as seguintes, cerca de 150 ms), inclusive quando falhou. A causa provável é a primeira obtenção do token por impersonação; não foi investigada. Esse atraso conta dentro do prazo de 50 s e do corte de 60 s do Hosting. **A avaliar no primeiro deploy:** se o Cloud Run mostrar atraso na primeira chamada de uma instância nova, obter o token de serviço uma vez na inicialização, antes de aceitar tráfego.
 
 ## ExifTools
 
@@ -179,20 +181,38 @@ HTML continua sendo texto: quem exibe escapa.
 - `author`, `cameraModel` e `dimensions` de nível superior;
 - qualquer grupo ou campo não listado acima.
 
-**A confirmar com a ExifTools real:**
-- os nomes das tags dentro de `XMP`, `GPS` e `Composite`. São os nomes padrão do ExifTool, mas a documentação só diz que os grupos seguem esses nomes;
-- vídeo (grupo `QuickTime`), que não aparece documentado e fica de fora por enquanto;
-- a estrutura de `ingredients`.
+**Teste real da ExifTools (24/10/2026).** Feito com o `try-exiftools` (`docs/desenvolvimento-local.md`).
+
+Confirmado com um JPEG sintético de metadados conhecidos:
+- **nomes de tags que batem com a lista permitida:**
+  - EXIF: `Make`, `Model`, `Software`, `Artist`, `Copyright`, `CreateDate`, `DateTimeOriginal`, `ModifyDate`, `GPSLatitude`/`GPSLongitude`;
+  - XMP: `CreateDate`, `CreatorTool`, `ModifyDate`;
+  - Composite: `GPSLatitude`/`GPSLongitude`, `ImageSize`;
+  - grupo GPS.
+- **dimensões:** vêm de `Composite.ImageSize` e de `dimensions`, não de `File.ImageWidth`/`ImageHeight`. Depois da correção, o `try-exiftools` devolveu `width` 640 e `height` 480, e o resto idêntico;
+- **arquivos sem EXIF:** um PNG e JPEGs sem EXIF devolvem os grupos `File`, `JFIF`, `Composite` e `ICC_Profile`, com `c2pa` `null`.
+
+**Ainda não verificado:**
+- a estrutura de `contentCredentials` com C2PA real, e o valor desse campo num arquivo sem C2PA (a fixture de teste usa `null` por suposição);
+- a estrutura de `ingredients`;
+- se 413, 415 e 429 existem em `/extract`;
+- a latência real por chamada;
+- vídeo (grupo `QuickTime`), que fica de fora por enquanto.
 
 **Avisos fixos no relatório:** "A revogação de certificados C2PA não é verificada online." e "Um signatário confiável indica quem gerou o arquivo, não que o conteúdo seja verdadeiro."
 
-**Retenção do lado da ExifTools:** os resultados são recuperáveis por UUID, o que indica que a ExifTools guarda alguma coisa. A API nunca repassa o UUID, mas o arquivo enviado pode conter GPS e autoria. Ver `docs/politica-privacidade.md`.
+**Retenção do lado da ExifTools:**
+- **Contradição:** a página oficial diz que os arquivos são processados e excluídos. Mas a API devolve um `uuid` que permite recuperar o resultado depois (`GET /extract/{uuid}`), e o `/remove` guarda o arquivo limpo por 24 h.
+- **Consequência:** a política de privacidade não afirma prazo de retenção. A API nunca repassa o UUID, mas o arquivo enviado pode conter GPS e autoria. Ver `docs/politica-privacidade.md`.
+- **Limites documentados:** 100 MB por arquivo enviado. Não há limite de requisições documentado; ele é tratado como inexistente, com o tratamento defensivo de 429 e 5xx descrito acima.
+- **Não informados:** a retenção real, a região de processamento e o SLA.
+- **Geocodificação:** a resposta real inclui `address` e `addressPlusCode`, derivados do GPS. A API descarta os dois (ver "Nunca saem"), mas não sabemos se a ExifTools usa um terceiro para geocodificar. É pendência de revisão jurídica (`docs/arquitetura.md`).
 
 ## Limite por usuário (plano gratuito)
 
 `api/src/plans.ts` e `api/src/rate-limit.ts`.
 
-- **Planos:** a tabela de planos tem só `free`: 10 verificações por hora e até 8 mídias por verificação. `resolvePlan` devolve sempre `free` e é o ponto de extensão para planos futuros. Não há cobrança nem cadastro.
+- **Planos:** a tabela de planos tem só `free`: 10 verificações por hora e até 8 mídias por verificação. `free` é a base. Planos pagos hipotéticos, se vierem, entram estendendo a tabela de planos e a função `resolvePlan(user)`, que hoje devolve sempre `free`. Não há cobrança nem cadastro nesta fase.
 - **Janela deslizante de 1 hora por usuário.** A chave é o HMAC-SHA-256 do `sub` do ID token, com chave aleatória gerada quando o processo sobe e nunca gravada. O e-mail não é guardado, nem o `sub` em claro.
 - **Memória limitada:** uma varredura, no máximo a cada 60 s, remove os usuários cuja última checagem saiu da janela. Teto de 10 000 usuários: cheio e sem nada expirado, um usuário novo recebe 429 (falha fechada).
 - **O que conta:** toda checagem com corpo válido conta, mesmo que falhe, menos quando o fetcher está ocupado.
@@ -231,12 +251,23 @@ Uma linha JSON por requisição: `method`, `route` (normalizada), `status`, `dur
 
 - **Nunca aparecem:** URL, caminho, corpo, token, e-mail, `sub`, chave da ExifTools nem bytes.
 - **`domainHash`:** HMAC-SHA-256 truncado do hostname, com chave aleatória do processo, igual ao do fetcher.
-- **`outcome`:** inclui a categoria interna exata, que nunca vai para o usuário. Valores:
-  - `ok`;
-  - `fetch_<categoria>` (por exemplo `fetch_blocked`);
-  - `fetcher_busy`, `fetcher_unauthorized`, `fetcher_timeout`;
-  - `fetcher_status`, `fetcher_network`, `fetcher_malformed`, `fetcher_token`;
-  - `rate_limited`, `limiter_full`, `api_busy`;
-  - `unauthorized`, `bad_request`, `bad_content_type`, `body_too_large`;
-  - `client_closed`, `internal_error`.
+- **`outcome`:** inclui a categoria interna exata, que nunca vai para o usuário. "Observado" marca os valores vistos no teste real de 24/10/2026; os demais vêm do código e ainda não apareceram num teste manual.
+
+  | `outcome` | Significado | Observado |
+  | --- | --- | --- |
+  | `ok` | Relatório devolvido (200) | sim |
+  | `fetch_blocked` | Destino bloqueado pelo fetcher (IP interno, metadados); o usuário vê a mensagem única de endereço inacessível | sim |
+  | `fetch_network` | Falha de rede ou de DNS no fetcher (por exemplo, domínio inexistente); mesma mensagem única | sim |
+  | `fetch_upstream_status` | O site respondeu com erro (422 com `httpStatus`) | sim |
+  | `fetch_<outra categoria>` | `timeout`, `invalid_url`, `too_large`, `unsupported_type`, `too_many_redirects` | não |
+  | `fetcher_token` | A API não conseguiu emitir o token de serviço (502) | sim |
+  | `fetcher_unauthorized` | O fetcher recusou o token de serviço (502) | sim |
+  | `fetcher_network` | O fetcher não respondeu: fora do ar (502) | sim |
+  | `fetcher_busy`, `fetcher_timeout`, `fetcher_status`, `fetcher_malformed` | Fetcher ocupado depois das novas tentativas (503), prazo esgotado (504), status inesperado ou resposta fora do contrato (502) | não |
+  | `rate_limited` | Limite do plano estourado (429) | sim |
+  | `limiter_full`, `api_busy` | Teto de usuários do contador (429) ou de checagens em andamento (503) | não |
+  | `bad_request` | Corpo inválido (400) | sim |
+  | `unauthorized` | Token do usuário ausente ou inválido (401) | sim |
+  | `bad_content_type`, `body_too_large` | 415 e 413 | não |
+  | `client_closed`, `internal_error` | O usuário fechou a conexão; erro inesperado | não |
 - **Exatamente uma linha:** a linha sai no fim da resposta. Se a conexão fechar antes, sai como `client_closed`.

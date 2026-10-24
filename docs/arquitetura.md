@@ -46,7 +46,7 @@ A API é o único componente que conversa com todos os serviços. O fetcher é o
 
 ## Fluxo de uma verificação
 
-Uma verificação é uma única requisição em streaming, do login ao descarte dos dados.
+Uma verificação é uma única requisição, do login ao descarte dos dados. Na Fase 4, a API responde com um único JSON no fim (`docs/api.md`); o envio progressivo por SSE ficou como melhoria futura opcional.
 
 1. O usuário entra com Google e o navegador obtém um ID token.
 2. O navegador envia a URL no corpo de um POST (nunca na query string) e o token no header Authorization.
@@ -56,7 +56,7 @@ Uma verificação é uma única requisição em streaming, do login ao descarte 
 6. O fetcher extrai do HTML as mídias (img, srcset, video, source, og:image, og:video) e o título ou manchete. A leitura de ClaimReview em JSON-LD entra na Fase 5.
 7. Cada mídia é baixada uma única vez pelo fetcher, com as mesmas validações da URL do usuário, limite de tamanho e lista de tipos permitidos, e o SHA-256 é calculado. Detalhes, limites e regras de implantação em `docs/fetcher.md`.
 8. As checagens rodam em paralelo: ExifTools (EXIF e C2PA), Cloud Vision (Web Detection), Web Risk (reputação da URL) e Fact Check (busca da afirmação extraída).
-9. O agregador junta os sinais e envia o resultado ao navegador. Na Fase 4, a resposta é um único JSON no fim da verificação (`docs/api.md`). O envio de cada resultado por SSE, assim que fica pronto, fica para uma fase posterior.
+9. O agregador junta os sinais e envia o resultado ao navegador. Na Fase 4, a resposta é um único JSON no fim da verificação (`docs/api.md`). O envio de cada resultado por SSE, assim que fica pronto, fica como melhoria futura opcional.
 10. O navegador monta o relatório e o usuário baixa PDF ou JSON.
 11. O servidor descarta tudo em um bloco finally. Nada vai para disco ou banco.
 
@@ -119,7 +119,7 @@ A minuta da política de privacidade acompanha este documento, em arquivo separa
 
 ## Relatório em PDF e JSON
 
-O relatório é montado no navegador a partir do que a API enviou por SSE, então o servidor não precisa guardar nada para que o usuário o leve consigo.
+O relatório é montado no navegador a partir da resposta JSON da API, então o servidor não precisa guardar nada para que o usuário o leve consigo.
 
 - **JSON.** Um Blob baixado pelo navegador, sem dependências. Campos mínimos: versão do esquema, data e hora, URL analisada, SHA-256 de cada mídia e, por checagem, estado, evidência, fonte e limitação conhecida, além de um aviso fixo de que os sinais não são veredictos.
 - **PDF.** Começar com folha de estilo de impressão e window.print() ("Salvar como PDF"), que não adiciona dependências. Se for preciso layout exato, usar uma biblioteca como pdf-lib ou jsPDF, com versão fixa e passando pelos controles de cadeia de suprimentos.
@@ -156,6 +156,7 @@ Os riscos mais altos são jurídicos (registros de acesso e LGPD), a dependênci
 **A confirmar antes de implementar**
 
 - Limites de requisição, preço, retenção de dados e SLA da ExifTools, e onde ela processa os dados.
+- Geocodificação pela ExifTools (pendência de 24/10/2026): a resposta inclui `address` e `addressPlusCode`, derivados do GPS. A API descarta os dois, mas não sabemos se a ExifTools usa um terceiro para geocodificar. Levar à revisão jurídica e, se possível, perguntar à ExifTools (nota 9 de `docs/politica-privacidade.md`).
 - Termos de uso comercial do Web Risk e da Safe Browsing.
 - Exigência de faturamento no Firebase para encaminhar requisições ao Cloud Run.
 - Enquadramento do projeto no Marco Civil (artigo 15) e necessidade de encarregado de dados na LGPD.
@@ -168,7 +169,7 @@ A implementação segue sete fases, e cada uma só termina quando seus testes pa
 1. **Fundação.** Repositório com pastas web/ e api/, .npmrc endurecido, CI, arquivo CLAUDE.md, projeto Google Cloud com alertas de orçamento e projeto Firebase. Pronto quando o CI roda verde em um commit vazio.
 2. **Esqueleto seguro.** API no Cloud Run que valida o ID token do Google; front mínimo com login, cabeçalhos e CSP. Pronto quando um usuário logado chama uma rota protegida e um token inválido é recusado.
 3. **Fetcher seguro.** Validação de URL, proteção contra SSRF, extração de mídias, limites de tamanho e tempo. Pronto quando toda a bateria de testes de SSRF passa.
-4. **ExifTools e relatório.** Integração EXIF e C2PA, agregador de sinais, streaming SSE e relatório JSON. Pronto quando uma página real gera um relatório completo.
+4. **ExifTools e relatório.** Integração EXIF e C2PA, agregador de sinais e relatório em resposta JSON única (entregue na Fase 4; SSE como melhoria futura opcional). Pronto quando uma página real gera um relatório completo.
 5. **Demais checagens, uma por vez.** ClaimReview local, Fact Check, Web Risk e Cloud Vision, cada uma com sua chave, cota e alerta. Pronto quando cada plugin tem testes com respostas simuladas.
 6. **Lançamento limitado.** PDF, política de privacidade e termos publicados, revisão jurídica, teste dos limites de uso e do custo por verificação. Pronto quando o advogado aprova e o custo por verificação está dentro do orçamento.
 7. **Opcional.** Relatório assinado, análise de PDF e Office, plano B com ExifTool auto-hospedado.

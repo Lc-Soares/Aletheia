@@ -23,7 +23,8 @@ Serviço isolado que recebe a URL enviada pelo usuário, baixa a página e as m�
 
 **A validar no primeiro deploy: claims do ID token.** A documentação do Google (tipos de token; Cloud Run service-to-service; identidade da instância) lista formalmente só `aud`, `azp`, `exp`, `iss` e `sub` no ID token. `email` e `email_verified` aparecem nos exemplos decodificados e nos exemplos de código (o de Java recusa `email_verified` falso), mas a prosa não garante esses campos. A documentação diz que "o conjunto exato de claims depende de como o token é pedido".
 - O fetcher exige `email` e `email_verified` e falha fechado: sem eles, a resposta é 401.
-- No primeiro deploy, decodificar um token real obtido pela API e conferir os campos.
+- **Verificado localmente (24/10/2026):** com a impersonação do gcloud (`docs/desenvolvimento-local.md`), o ID token da conta de serviço trouxe `email` e `email_verified`, e o fetcher o aceitou.
+- **Não verificado:** o caminho pelo servidor de metadados do Cloud Run, que é o usado em produção. No primeiro deploy, decodificar um token real obtido pela API e conferir os campos.
 - Se o e-mail não vier, a alternativa é comparar `sub`, o ID numérico único da conta de serviço da API, em vez do e-mail.
 
 ## Contrato HTTP
@@ -171,7 +172,7 @@ Os testes usam resolvedor e transporte injetados. A única "política de teste" 
 | Conexão + TLS + cabeçalhos, por salto | 5 s | Servidor saudável responde cabeçalhos bem antes disso; corta servidores que seguram a conexão. |
 | HTML (redirecionamentos + corpo) | 10 s | O "cerca de 10 s" da arquitetura. |
 | Cada mídia (redirecionamentos + corpo) | 20 s | 15 MiB precisam de banda razoável; 20 s dá cerca de 6 Mbit/s. |
-| Página inteira (HTML + mídias) | 30 s | Cabe no fluxo SSE da API; mídias pendentes viram `timeout`, e o resto do relatório segue. |
+| Página inteira (HTML + mídias) | 30 s | Cabe nos 40 s da fase do fetcher na API e no prazo total de 50 s da resposta JSON (`docs/api.md`); mídias pendentes viram `timeout`, e o resto do relatório segue. |
 | HTML descompactado | 2 MiB | Páginas de notícia raramente passam disso. **Não limita a memória do parse5:** uma página hostil de cerca de 55 KB gera milhões de nós. Quem limita é o heap do worker de extração. |
 | Cada mídia descompactada | 15 MiB | Cobre fotos de câmera e celular em alta resolução e clipes curtos; bem abaixo dos 100 MB da ExifTools. O limite da Cloud Vision ainda deve ser conferido na documentação oficial antes da Fase 5. Vídeos maiores viram `too_large` e entram no relatório como limitação. |
 | Mídia agregada por página | 60 MiB | 8 × 15 MiB daria 120 MiB por requisição; o teto agregado mantém a instância em 1 GiB com concorrência baixa. |
@@ -256,6 +257,13 @@ Decisão de produto: o sistema escolhe sozinho as imagens principais, para usuá
 - Palavras-chave só em inglês e em minúsculas depois da conversão; `siteLogo` ou nomes em português não são reconhecidos.
 - SVG só é reconhecido pela extensão ou pelo `type` da `<source>`.
 
+**Calibração encerrada (decisão de 24/10/2026).** Os casos abaixo foram vistos com o `try-fetch` em páginas reais e ficam como estão, sem calibrar mais. Só reabrir se uma página real usada na demonstração der resultado ruim.
+- **Empate de pontuação resolvido só pela ordem do documento.** Na Wikipedia, bandeira, brasão, selo e mapa da infobox entraram entre as 8 escolhidas antes das fotos do artigo.
+- **Avatar de autor e miniaturas de matérias relacionadas ainda são baixados** (Olhar Digital). O avatar tinha `150x150` só no nome do arquivo, que a heurística não lê como dimensão.
+- **A mesma foto servida por dois hosts vira dois grupos.** A união só acontece com a mesma URL.
+- **Com descritor `w`, prevalece o maior `w`**, mesmo que exista um `<img src>` sem descritor maior. Na BBC, a variante escolhida foi a de 512w em vez do `src` de 1024.
+- **A maior variante é escolhida mesmo quando é pesada.** No G1, foi um GIF de cerca de 9,9 MB.
+
 ### Sinal de página montada por JavaScript
 
 `possiblyNeedsJavaScript` é `true` quando, ao mesmo tempo:
@@ -263,7 +271,7 @@ Decisão de produto: o sistema escolhe sozinho as imagens principais, para usuá
 - o texto visível do documento tem menos de 500 caracteres (sem contar espaços, nem texto dentro de `script`, `style`, `noscript`, `template`, `title` e `textarea`);
 - há pelo menos um `<script>`, **ou** um ponto de montagem vazio: elemento com `id` `root`, `app`, `__next`, `__nuxt` ou `___gatsby` sem elementos filhos.
 
-É heurística, nunca certeza. Falsos positivos: página legítima curta e sem imagens que carrega algum script. Falsos negativos: aplicação de página única que pré-renderiza texto mas monta as imagens por JavaScript, ou página com uma única imagem de interface. Uma página estática curta, sem script e sem mídia (como example.com) não recebe o sinal. A API e a interface devem apresentar o sinal como possibilidade ("a página possivelmente depende de JavaScript; as mídias podem não ter sido vistas"), nunca como fato.
+É heurística, nunca certeza. Falsos positivos: página legítima curta e sem imagens que carrega algum script. Falsos negativos: aplicação de página única que pré-renderiza texto mas monta as imagens por JavaScript, ou página com uma única imagem de interface. **Observado no teste real:** o `try-fetch` mostrou o sinal em `http://example.com/`, uma página mínima. É um falso positivo; a causa não foi investigada e o caso foi aceito pelo baixo impacto (o sinal é apresentado só como possibilidade). A API e a interface devem apresentar o sinal como possibilidade ("a página possivelmente depende de JavaScript; as mídias podem não ter sido vistas"), nunca como fato.
 
 ### Extração isolada em worker
 

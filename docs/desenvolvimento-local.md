@@ -2,10 +2,12 @@
 
 Roda web e API juntos, na mesma origem, sem `firebase-tools`.
 
-1. Terminal 1 (API). As variáveis vêm do seu ambiente; a lista completa está em `docs/api.md`, "Configuração" (atualize o `api/.env.example` com `FETCHER_URL`, `FETCHER_AUDIENCE` e `EXIFTOOLS_API_KEY`, sem valor):
+Todos os comandos deste arquivo são para o **Git Bash** (no Windows, nunca o PowerShell: a forma `VAR=valor comando` não funciona lá).
+
+1. Terminal 1 (API). As variáveis vêm do seu ambiente; a lista completa está em `docs/api.md`, "Configuração". Para guardar os valores, ver "Segredos locais" e "`api/.env.example`", abaixo:
    `GOOGLE_CLIENT_ID=<id do cliente OAuth> PORT=8080 FETCHER_URL=http://localhost:8081 FETCHER_AUDIENCE=http://localhost:8081 EXIFTOOLS_API_KEY=<sua chave> npm start -w api`
 
-   `EXIFTOOLS_API_KEY` é obrigatória: sem ela a API não sobe. Defina a chave na sessão do terminal, sem gravar em arquivo do repositório e sem colar em issue ou chat. `/healthz` e `/api/me` funcionam sem o fetcher no ar. Para `/api/check`, ver "API com o fetcher local".
+   `EXIFTOOLS_API_KEY` é obrigatória: sem ela a API não sobe. Para testar só o login (`/api/me`), qualquer valor serve. `/healthz` e `/api/me` funcionam sem o fetcher no ar. Para `/api/check`, ver "API com o fetcher local".
 2. Terminal 2 (web + proxy): `npm run dev -w web`
 3. Abra `http://localhost:5000`.
 
@@ -50,7 +52,7 @@ npm run try-fetch -w fetcher -- https://example.com/
 npm run try-fetch -w fetcher -- --arquivo scripts/lista-exemplo.txt
 ```
 
-O caminho de `--arquivo` é relativo a `fetcher/`. O arquivo tem uma URL por linha, e linhas vazias ou começadas por `#` são ignoradas.
+O caminho relativo de `--arquivo` vale a partir de `fetcher/`, porque o `npm run -w fetcher` roda o script com o diretório de trabalho em `fetcher/`. Caminho absoluto também funciona; no Windows, use barras normais (`C:/Users/...`). O arquivo tem uma URL por linha, e linhas vazias ou começadas por `#` são ignoradas.
 
 > **Aviso:** o script faz **requisições reais a partir da máquina de quem roda** (o IP, a rede e o DNS são os seus). Use só com **páginas públicas**. O resultado pode variar com a rede, o DNS, CDNs, bloqueio de User-Agent e desafios anti-bot, e não reproduz o Cloud Run.
 
@@ -105,27 +107,76 @@ Se qualquer uma delas sair diferente de `blocked`, é regressão de segurança: 
 
 Roda `POST /api/check` de ponta a ponta na sua máquina, com o fetcher de verdade. **Não existe atalho de desenvolvimento no código:** a API sempre obtém um ID token real do Google, e o fetcher sempre o valida (assinatura, `aud`, `email_verified` e e-mail da conta de serviço). A única diferença é o `http://localhost` em `FETCHER_URL` e `FETCHER_AUDIENCE`, que a config aceita só para `localhost`, a mesma regra do fetcher. Em produção, esse endereço simplesmente não conectaria.
 
-1. **Uma vez:** credenciais padrão do gcloud com impersonação da conta de serviço da API. Confira as opções na documentação atual do gcloud.
+Lições do primeiro teste real (24/10/2026):
+- **Git Bash, não PowerShell.** Comandos do gcloud em **uma linha só**: a quebra de linha com `\` falhou ao colar no Git Bash do Windows.
+- **Sempre o ID real do projeto**, nunca o texto de exemplo. Defina a variável em cada janela que for usá-la:
+  `PROJECT_ID=$(gcloud config get-value project)`
+
+### Preparação (uma vez), nesta ordem
+
+1. Habilitar as APIs: `gcloud services enable iamcredentials.googleapis.com iam.googleapis.com`
+2. Criar a conta de serviço da API (a `<conta de serviço da API>` tem a forma `<nome>@<ID_DO_PROJETO>.iam.gserviceaccount.com`).
+3. Dar a você o papel `roles/iam.serviceAccountTokenCreator` **nessa** conta de serviço.
+4. Credenciais padrão com impersonação:
    `gcloud auth application-default login --impersonate-service-account=<conta de serviço da API>`
 
-   Sua conta precisa do papel `roles/iam.serviceAccountTokenCreator` **nessa** conta de serviço. Com isso, o `GoogleAuth` emite ID tokens da conta de serviço da API. No `google-auth-library` 11.3.1, `Impersonated.fetchIdToken` pede o e-mail no token por padrão (`includeEmail: true`), e o fetcher exige `email`.
-2. **Terminal 1 (fetcher):** `PORT=8081 FETCHER_AUDIENCE=http://localhost:8081 API_SERVICE_ACCOUNT_EMAIL=<conta de serviço da API> npm start -w fetcher`
-3. **Terminal 2 (API):** o comando do passo 1 do início deste arquivo, com `FETCHER_URL=http://localhost:8081` e `FETCHER_AUDIENCE=http://localhost:8081`.
-4. **Terminal 3:** `npm run dev -w web`.
-5. **Chamada:** entre em `http://localhost:5000`, copie o ID token do cabeçalho `Authorization` da requisição `/api/me` (DevTools, aba Rede) e chame:
+Com isso, o `GoogleAuth` emite ID tokens da conta de serviço da API. No `google-auth-library` 11.3.1, `Impersonated.fetchIdToken` pede o e-mail no token por padrão (`includeEmail: true`), e o fetcher exige `email`. Confira as opções na documentação atual do gcloud.
+
+**Como conferir sem expor segredo:**
+- `grep -o 'serviceAccounts/[^:"]*' <caminho do application_default_credentials.json>` deve mostrar a conta com o ID real do projeto. O arquivo traz `"type"` duas vezes, o que é normal: `authorized_user` dentro e `impersonated_service_account` no arquivo;
+- `gcloud auth print-identity-token --impersonate-service-account=<conta de serviço da API> --audiences=http://localhost:8081 --include-email > /dev/null && echo TOKEN_OK` testa a conta e a permissão, mas **não** prova que o arquivo de credenciais lido pela API está certo.
+
+**Depois de refazer o login do gcloud, reinicie a API** (e o fetcher, se mudar `API_SERVICE_ACCOUNT_EMAIL`): o processo carrega as credenciais ao subir.
+
+### Subir e chamar
+
+1. **Terminal 1 (fetcher):** `PORT=8081 FETCHER_AUDIENCE=http://localhost:8081 API_SERVICE_ACCOUNT_EMAIL=<conta de serviço da API> npm start -w fetcher`
+2. **Terminal 2 (API):** o comando do passo 1 do início deste arquivo, com `FETCHER_URL=http://localhost:8081` e `FETCHER_AUDIENCE=http://localhost:8081`.
+3. **Terminal 3:** `npm run dev -w web`.
+4. **Chamada:** entre em `http://localhost:5000`, copie o ID token do cabeçalho `Authorization` da requisição `/api/me` (DevTools, aba Rede) e chame:
    `curl -s -X POST http://localhost:5000/api/check -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d '{"url":"https://example.com/"}'`
 
-   O token do usuário dura 1 hora. Não cole o token em lugar nenhum além do terminal.
+   O token do usuário dura 1 hora. Não cole o token em lugar nenhum além do terminal. Guarde os `.json` de resposta fora do repositório.
 
-Conferências rápidas:
-- `{"url":"http://127.0.0.1/"}` precisa responder 422 com "Não foi possível acessar este endereço." (a mesma mensagem de um domínio inexistente);
-- a 11ª checagem na mesma hora responde 429;
-- os logs dos dois serviços não podem ter a URL, só `domainHash`;
-- cada mídia baixada traz `metadata`. Um `config_error` no campo `exif` do log da API indica que a ExifTools recusou a chave.
+O fetcher faz requisições reais a partir da sua máquina (ver o aviso do `try-fetch`). Com `EXIFTOOLS_API_KEY` real, cada mídia baixada vai para a ExifTools de verdade, com custo e cota desconhecidos.
 
-Com `EXIFTOOLS_API_KEY` real, cada mídia baixada vai para a ExifTools de verdade, com custo e cota desconhecidos.
+**Primeira chamada lenta:** localmente, a primeira chamada de cada processo da API levou cerca de 15 s, inclusive quando falhou; as seguintes, cerca de 150 ms. A causa provável é a primeira obtenção do token por impersonação. **Não investigado.** Ver a recomendação para o deploy em `docs/api.md`, "Chamada ao fetcher".
 
-O fetcher faz requisições reais a partir da sua máquina (ver o aviso do `try-fetch`). Se o token de serviço não puder ser emitido (sem impersonação ou sem o papel), a API responde 502 e registra `fetcher_token` no log. Se o fetcher recusar o token, a API responde 502 e registra `fetcher_unauthorized`.
+### Diagnóstico (campo `outcome` do log da API)
+
+| Sintoma | Significado |
+| --- | --- |
+| `fetcher_token` | A API não conseguiu emitir o token de serviço: credenciais ausentes, apontando para a conta errada, sem o papel `roles/iam.serviceAccountTokenCreator`, ou IAM Credentials API desabilitada. |
+| `fetcher_unauthorized` | O fetcher recusou o token: `API_SERVICE_ACCOUNT_EMAIL` (no fetcher) ou `aud` (`FETCHER_AUDIENCE` nos dois) diferentes. |
+| `fetcher_network` | O fetcher está fora do ar. A resposta é 502 `internal`, não 422. |
+| 502 sem nenhuma requisição no log do fetcher | A falha aconteceu antes de chegar ao fetcher (normalmente `fetcher_token`). |
+| `config_error` no campo `exif` | A ExifTools recusou a chave. |
+
+### Roteiro manual (validado em 24/10/2026)
+
+| Teste | Resultado esperado |
+| --- | --- |
+| Página pública | 200, com mídias, downloads e `metadata`, sem bytes |
+| `http://127.0.0.1/`, `http://169.254.169.254/` e um domínio inexistente | 422 com respostas **byte a byte iguais** ("Não foi possível acessar este endereço."); só o log interno distingue `fetch_blocked` de `fetch_network` |
+| Site que responde 403 | 422 `upstream_status` com `httpStatus: 403` |
+| Sem token ou com token lixo | 401 |
+| `GET /api/check` | 405 com `Allow: POST` |
+| Corpos inválidos | 400, sem gastar cota |
+| 11 checagens válidas na mesma hora | As 10 primeiras passam e a 11ª dá 429. Reiniciar a API zera o contador |
+| Fetcher parado | 502 `internal` |
+| Logs dos dois serviços | Sem URL, token nem e-mail; só `domainHash` |
+
+### Segredos locais
+
+- Guarde a chave da ExifTools e o Client ID num arquivo **fora do repositório** (por exemplo `secrets.sh`, com linhas `export NOME="valor"`, sem espaço em volta do `=`) e carregue com `source <caminho>/secrets.sh` em cada janela. Nunca no `api/.env.example`.
+- Para conferir se a variável foi carregada, veja só o tamanho, nunca o valor: `echo ${#EXIFTOOLS_API_KEY}`.
+- Para revogar a impersonação local: `gcloud auth application-default revoke`.
+
+### `api/.env.example`
+
+Traz só os nomes das variáveis (`GOOGLE_CLIENT_ID`, `FETCHER_URL`, `FETCHER_AUDIENCE`, `EXIFTOOLS_API_KEY`), sem valores. Quem o mantém é o desenvolvedor; o agente não toca em arquivos `.env*`.
+
+**Decisão tomada:** o `api/.env.example` é versionado como modelo, só com os nomes e sem valores. O `.gitignore` tem `!.env.example` depois da regra `.env.*`, que antes também o ignorava.
 
 ## Conferir a ExifTools com um arquivo: `try-exiftools`
 
@@ -136,11 +187,13 @@ Script de desenvolvimento (`api/scripts/try-exiftools.ts`) que envia **um arquiv
 
 Não há opção, flag nem variável que mude destino, limites ou proteção. Serve para conferir se os nomes de tags da lista permitida (GPS, XMP, Composite, `contentCredentials`) batem com o que a ExifTools devolve de verdade.
 
+Com o `secrets.sh` já carregado (ver "Segredos locais"):
+
 ```
-EXIFTOOLS_API_KEY=<sua chave> npm run try-exiftools -w api -- <caminho do arquivo>
+npm run try-exiftools -w api -- <caminho do arquivo>
 ```
 
-O caminho é relativo a `api/`. Formatos aceitos: os mesmos que o fetcher baixa (`.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.avif`, `.heic`, `.heif`, `.tif`, `.tiff`, `.mp4`, `.webm`, `.mov`), até 15 MiB.
+O caminho é relativo a `api/`; caminho absoluto também funciona (no Windows, com barras normais: `C:/Users/...`). Formatos aceitos: os mesmos que o fetcher baixa (`.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.avif`, `.heic`, `.heif`, `.tif`, `.tiff`, `.mp4`, `.webm`, `.mov`), até 15 MiB.
 
 > **Aviso:** o arquivo **sai da sua máquina e vai para a ExifTools**, um serviço de terceiros que guarda resultados (recuperáveis por UUID). Use **só arquivos próprios**, nunca fotos de outras pessoas. Uma foto pode conter localização e autoria. A chave vem só da variável `EXIFTOOLS_API_KEY` do terminal: o script não lê nenhum arquivo de ambiente e nunca imprime a chave.
 
@@ -153,11 +206,17 @@ Saída, em texto:
 Garantias, todas com teste em `api/scripts/try-exiftools.test.ts`:
 - **nunca imprime:** valores brutos (coordenadas, nomes de autor, números de série), a chave, os bytes;
 - **higiene do terminal:** nomes de tags e sinais passam pela mesma higienização do `try-fetch` (sem ANSI, controles e caracteres de formato Unicode);
-- **só a chave e o arquivo do argumento:** do ambiente, o script lê apenas `EXIFTOOLS_API_KEY`, e só pelo ponto de entrada: `main` não recebe nada além da chave. Do disco, lê apenas o arquivo passado como argumento. Isso é verificado por comportamento, não por varredura do código: um ambiente falso com sentinelas e um leitor de arquivos injetado registram cada acesso, e os testes exigem que a chave chegue à ExifTools só no `X-API-Key` e que nenhuma sentinela apareça na saída;
+- **só a chave e o arquivo do argumento:** do ambiente, o script lê apenas `EXIFTOOLS_API_KEY`, e só pelo ponto de entrada: `main` não recebe nada além da chave. Do disco, lê apenas o arquivo passado como argumento. Isso é verificado por comportamento, não por varredura do código: um ambiente falso com sentinelas e um leitor de arquivos injetado registram cada acesso, e os testes exigem que a chave chegue à ExifTools só no `X-API-Key` e que nenhuma sentinela apareça na saída. **Limite:** a garantia vale para o comportamento de `main` e de `scriptEnv`, que recebem o ambiente falso. Uma leitura direta de `process.env` dentro de `scriptEnv` não passa por esse ambiente: só é vista por um teste de alarme (exatamente uma ocorrência de `process.env` no arquivo), que não pega `process["env"]`;
 - **sem rastro:** não grava nada em disco e termina sozinho;
 - **isolamento:** fica fora da imagem Docker (`.dockerignore` remove `api/scripts`), e nenhum módulo de produção o importa.
 
 Código de saída: 0 quando rodou, mesmo que a ExifTools tenha falhado (o status aparece na saída); 2 para uso errado, chave ausente, extensão não suportada, arquivo ilegível ou acima de 15 MiB.
+
+### Teste manual dos sinais
+
+- Fotos de bancos de imagem (como o Unsplash) vêm **sem EXIF**, e mensageiros e redes sociais também removem os metadados. Um resultado sem sinais nessas fotos é o esperado, não um erro.
+- Para testar os sinais, use um arquivo com **metadados conhecidos** (um JPEG sintético com EXIF, GPS e XMP serve) e compare o resultado com o esperado. Resultado do teste de 24/10/2026: `docs/api.md`, "Teste real da ExifTools".
+- **Primeiro teste real completo** (24/10/2026): `/api/check` numa página da BBC analisou 8 de 8 mídias em cerca de 20 s no total, dos quais cerca de 15 s foram da obtenção do primeiro token de serviço local (ver "Primeira chamada lenta").
 
 ## Origens a autorizar no cliente OAuth (Google Cloud Console)
 

@@ -5,8 +5,8 @@ coverage/
 # Segredos
 .env
 .env.*
+.env.*!.example
 secrets/
-
 # Estado local do Claude Code (não versionar)
 .claude/state/
 .claude/settings.local.json
