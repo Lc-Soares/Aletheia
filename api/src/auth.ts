@@ -1,6 +1,6 @@
 import { OAuth2Client } from "google-auth-library";
 
-export type VerifiedIdentity = { email: string };
+export type VerifiedIdentity = { email: string; sub: string };
 export type TokenVerifier = (token: string) => Promise<VerifiedIdentity>;
 
 const GOOGLE_ISSUERS = ["accounts.google.com", "https://accounts.google.com"];
@@ -32,6 +32,8 @@ export function createGoogleVerifier(
     if (payload.exp * 1000 <= Date.now()) throw new Error("token expirado");
     if (payload.email_verified !== true) throw new Error("e-mail não verificado");
     if (typeof payload.email !== "string" || payload.email === "") throw new Error("e-mail ausente");
-    return { email: payload.email };
+    // sub: identificador estável da conta, usado (em HMAC) como chave do limite por usuário.
+    if (typeof payload.sub !== "string" || payload.sub === "") throw new Error("sub ausente");
+    return { email: payload.email, sub: payload.sub };
   };
 }

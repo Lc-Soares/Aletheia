@@ -56,7 +56,7 @@ Uma verificação é uma única requisição em streaming, do login ao descarte 
 6. O fetcher extrai do HTML as mídias (img, srcset, video, source, og:image, og:video) e o título ou manchete. A leitura de ClaimReview em JSON-LD entra na Fase 5.
 7. Cada mídia é baixada uma única vez pelo fetcher, com as mesmas validações da URL do usuário, limite de tamanho e lista de tipos permitidos, e o SHA-256 é calculado. Detalhes, limites e regras de implantação em `docs/fetcher.md`.
 8. As checagens rodam em paralelo: ExifTools (EXIF e C2PA), Cloud Vision (Web Detection), Web Risk (reputação da URL) e Fact Check (busca da afirmação extraída).
-9. O agregador junta os sinais e envia cada resultado ao navegador por SSE assim que fica pronto.
+9. O agregador junta os sinais e envia o resultado ao navegador. Na Fase 4, a resposta é um único JSON no fim da verificação (`docs/api.md`). O envio de cada resultado por SSE, assim que fica pronto, fica para uma fase posterior.
 10. O navegador monta o relatório e o usuário baixa PDF ou JSON.
 11. O servidor descarta tudo em um bloco finally. Nada vai para disco ou banco.
 

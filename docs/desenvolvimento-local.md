@@ -2,8 +2,10 @@
 
 Roda web e API juntos, na mesma origem, sem `firebase-tools`.
 
-1. Terminal 1 (API). As variáveis vêm do seu ambiente; os nomes estão em `api/.env.example`:
-   `GOOGLE_CLIENT_ID=<id do cliente OAuth> PORT=8080 npm start -w api`
+1. Terminal 1 (API). As variáveis vêm do seu ambiente; a lista completa está em `docs/api.md`, "Configuração" (atualize o `api/.env.example` com `FETCHER_URL` e `FETCHER_AUDIENCE`):
+   `GOOGLE_CLIENT_ID=<id do cliente OAuth> PORT=8080 FETCHER_URL=http://localhost:8081 FETCHER_AUDIENCE=http://localhost:8081 npm start -w api`
+
+   `/healthz` e `/api/me` funcionam sem o fetcher no ar. Para `/api/check`, ver "API com o fetcher local".
 2. Terminal 2 (web + proxy): `npm run dev -w web`
 3. Abra `http://localhost:5000`.
 
@@ -31,7 +33,7 @@ Ao trocar a versão do Node, rode `npm run check`. Os testes de `fetcher/src/tes
 
 ## Fetcher
 
-O fetcher ainda não é chamado pela API (isso entra na Fase 4). Para subir só ele:
+A API chama o fetcher em `POST /api/check` (ver "API com o fetcher local", abaixo). Para subir só o fetcher:
 
 `PORT=8081 FETCHER_AUDIENCE=http://localhost:8081 API_SERVICE_ACCOUNT_EMAIL=<conta de serviço da API> npm start -w fetcher`
 
@@ -98,6 +100,29 @@ Requer **Node 24.2 ou superior**, por causa de `import.meta.main`. Código de sa
 | `http://[::1]/` | `blocked` | Loopback IPv6, fora da lista de permissão 2000::/3. |
 
 Se qualquer uma delas sair diferente de `blocked`, é regressão de segurança: pare e investigue.
+
+## API com o fetcher local
+
+Roda `POST /api/check` de ponta a ponta na sua máquina, com o fetcher de verdade. **Não existe atalho de desenvolvimento no código:** a API sempre obtém um ID token real do Google, e o fetcher sempre o valida (assinatura, `aud`, `email_verified` e e-mail da conta de serviço). A única diferença é o `http://localhost` em `FETCHER_URL` e `FETCHER_AUDIENCE`, que a config aceita só para `localhost`, a mesma regra do fetcher. Em produção, esse endereço simplesmente não conectaria.
+
+1. **Uma vez:** credenciais padrão do gcloud com impersonação da conta de serviço da API. Confira as opções na documentação atual do gcloud.
+   `gcloud auth application-default login --impersonate-service-account=<conta de serviço da API>`
+
+   Sua conta precisa do papel `roles/iam.serviceAccountTokenCreator` **nessa** conta de serviço. Com isso, o `GoogleAuth` emite ID tokens da conta de serviço da API. No `google-auth-library` 11.3.1, `Impersonated.fetchIdToken` pede o e-mail no token por padrão (`includeEmail: true`), e o fetcher exige `email`.
+2. **Terminal 1 (fetcher):** `PORT=8081 FETCHER_AUDIENCE=http://localhost:8081 API_SERVICE_ACCOUNT_EMAIL=<conta de serviço da API> npm start -w fetcher`
+3. **Terminal 2 (API):** o comando do passo 1 do início deste arquivo, com `FETCHER_URL=http://localhost:8081` e `FETCHER_AUDIENCE=http://localhost:8081`.
+4. **Terminal 3:** `npm run dev -w web`.
+5. **Chamada:** entre em `http://localhost:5000`, copie o ID token do cabeçalho `Authorization` da requisição `/api/me` (DevTools, aba Rede) e chame:
+   `curl -s -X POST http://localhost:5000/api/check -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d '{"url":"https://example.com/"}'`
+
+   O token do usuário dura 1 hora. Não cole o token em lugar nenhum além do terminal.
+
+Conferências rápidas:
+- `{"url":"http://127.0.0.1/"}` precisa responder 422 com "Não foi possível acessar este endereço." (a mesma mensagem de um domínio inexistente);
+- a 11ª checagem na mesma hora responde 429;
+- os logs dos dois serviços não podem ter a URL, só `domainHash`.
+
+O fetcher faz requisições reais a partir da sua máquina (ver o aviso do `try-fetch`). Se o token de serviço não puder ser emitido (sem impersonação ou sem o papel), a API responde 502 e registra `fetcher_token` no log. Se o fetcher recusar o token, a API responde 502 e registra `fetcher_unauthorized`.
 
 ## Origens a autorizar no cliente OAuth (Google Cloud Console)
 

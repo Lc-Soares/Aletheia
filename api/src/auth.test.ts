@@ -54,14 +54,14 @@ describe("createGoogleVerifier", () => {
     verify = createGoogleVerifier(TEST_CLIENT_ID, new OfflineOAuth2Client(keys.publicPem));
   });
 
-  test("aceita token válido e devolve só o e-mail", async () => {
+  test("aceita token válido e devolve só o e-mail e o sub", async () => {
     const result = await verify(signToken(validClaims(), { keys }));
-    assert.deepEqual(result, { email: "pessoa@example.com" });
+    assert.deepEqual(result, { email: "pessoa@example.com", sub: "1234567890" });
   });
 
   test("aceita iss sem esquema (accounts.google.com)", async () => {
     const token = signToken(validClaims({ iss: "accounts.google.com" }), { keys });
-    assert.deepEqual(await verify(token), { email: "pessoa@example.com" });
+    assert.deepEqual(await verify(token), { email: "pessoa@example.com", sub: "1234567890" });
   });
 
   const rejected: Array<[string, () => string]> = [
@@ -89,6 +89,9 @@ describe("createGoogleVerifier", () => {
     ["email_verified ausente", () => signToken(validClaims({ email_verified: undefined }), { keys })],
     ["e-mail ausente", () => signToken(validClaims({ email: undefined }), { keys })],
     ["e-mail que não é string", () => signToken(validClaims({ email: 42 }), { keys })],
+    ["sub ausente", () => signToken(validClaims({ sub: undefined }), { keys })],
+    ["sub vazio", () => signToken(validClaims({ sub: "" }), { keys })],
+    ["sub que não é string", () => signToken(validClaims({ sub: 1234567890 }), { keys })],
     ["alg none", () => signToken(validClaims(), { keys, mode: "none" })],
     ["HS256 com a chave pública como segredo", () => signToken(validClaims(), { keys, mode: "hs256-public-key" })],
     ["kid desconhecido", () => signToken(validClaims(), { keys, header: { kid: "outro" } })],

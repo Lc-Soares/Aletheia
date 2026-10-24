@@ -1,7 +1,12 @@
 // Auxiliares só para testes: tokens assinados com chave gerada na hora. Nada aqui fala com o Google.
-import { createHmac, createSign, generateKeyPairSync } from "node:crypto";
+import { createHash, createHmac, createSign, generateKeyPairSync } from "node:crypto";
+import { createServer, type IncomingHttpHeaders, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 
 import { OAuth2Client } from "google-auth-library";
+
+import type { CheckDeps } from "./check.ts";
+import { RateLimiter } from "./rate-limit.ts";
 
 export const TEST_CLIENT_ID = "test-client-id.apps.googleusercontent.com";
 export const TEST_KID = "test-kid";
@@ -65,4 +70,127 @@ export class OfflineOAuth2Client extends OAuth2Client {
   override getFederatedSignonCertsAsync(): Promise<CertsResponse> {
     return Promise.resolve({ certs: { [TEST_KID]: this.#publicPem }, format: "PEM" as CertsResponse["format"] });
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fetcher falso: servidor HTTP local em 127.0.0.1 que imita o contrato de docs/fetcher.md.
+// Nada aqui acessa a internet.
+
+export type FakeFetcherRequest = { method: string; path: string; headers: IncomingHttpHeaders; body: string };
+export type FakeFetcherHandler = (req: FakeFetcherRequest, res: ServerResponse) => void | Promise<void>;
+export type FakeFetcher = { url: string; requests: FakeFetcherRequest[]; close: () => Promise<void> };
+
+export async function startFakeFetcher(handler: FakeFetcherHandler): Promise<FakeFetcher> {
+  const requests: FakeFetcherRequest[] = [];
+  const server = createServer((req, res) => {
+    void (async () => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk as Buffer);
+      const entry = { method: req.method ?? "", path: req.url ?? "", headers: req.headers, body: Buffer.concat(chunks).toString("utf8") };
+      requests.push(entry);
+      await handler(entry, res);
+    })().catch(() => res.destroy());
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  const close = (): Promise<void> =>
+    new Promise<void>((resolve) => {
+      server.closeAllConnections();
+      server.close(() => resolve());
+    });
+  return { url: `http://127.0.0.1:${port}`, requests, close };
+}
+
+export const TEST_SERVICE_TOKEN = "service.token.de-teste";
+export const PAGE_URL = "https://noticias.example/materia";
+export const CAPA_BYTES = Buffer.from("bytes-da-capa-\u00e7\u00e3o", "utf8");
+export const FOTO_BYTES = Buffer.from("bytes-da-foto", "utf8");
+
+type Line = Record<string, unknown>;
+
+export function mediaRef(overrides: Line = {}): Line {
+  return { url: "https://cdn.example/og/capa.jpg", kind: "image", source: "og:image", group: 1, score: 100, selected: true, skipReason: null, ...overrides };
+}
+
+// Três referências: capa (og:image, grupo 1), foto do corpo (grupo 2) e um ícone ignorado (grupo 3).
+export const CAPA_REF = mediaRef();
+export const FOTO_REF = mediaRef({ url: "https://noticias.example/fotos/principal.jpg", source: "img", group: 2, score: 20 });
+export const ICONE_REF = mediaRef({
+  url: "https://noticias.example/assets/marca.png",
+  source: "img",
+  group: 3,
+  score: -70,
+  selected: false,
+  skipReason: "icon",
+});
+
+export function pageLine(overrides: Line = {}): Line {
+  return {
+    type: "page",
+    finalUrl: PAGE_URL,
+    title: "Mat\u00e9ria de exemplo",
+    headline: "Manchete inventada",
+    possiblyNeedsJavaScript: false,
+    media: [CAPA_REF, FOTO_REF, ICONE_REF],
+    ...overrides,
+  };
+}
+
+const sha256Hex = (bytes: Buffer): string => createHash("sha256").update(bytes).digest("hex");
+
+export function mediaLine(ref: Line, bytes: Buffer, overrides: Line = {}): Line {
+  const { url, kind, source, group } = ref;
+  return {
+    type: "media",
+    url,
+    kind,
+    source,
+    group,
+    contentType: "image/jpeg",
+    size: bytes.length,
+    sha256: sha256Hex(bytes),
+    data: bytes.toString("base64"),
+    ...overrides,
+  };
+}
+
+export function mediaErrorLine(ref: Line, error: string, httpStatus?: number): Line {
+  const { url, kind, source, group } = ref;
+  const line = { type: "media_error", url, kind, source, group, error };
+  return httpStatus === undefined ? line : { ...line, httpStatus };
+}
+
+export const DONE_LINE: Line = { type: "done" };
+
+export const ndjson = (lines: unknown[]): string => lines.map((line) => `${JSON.stringify(line)}\n`).join("");
+
+// Resposta completa e válida: capa baixada, foto com erro "blocked", ícone ignorado.
+export const standardStream = (): string =>
+  ndjson([pageLine(), mediaLine(CAPA_REF, CAPA_BYTES), mediaErrorLine(FOTO_REF, "blocked"), DONE_LINE]);
+
+// Envia o corpo em fatias pequenas, para cortar linhas e caracteres UTF-8 ao meio.
+export async function sendNdjson(res: ServerResponse, body: string | Buffer, chunkBytes = 0): Promise<void> {
+  res.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8" });
+  const bytes = Buffer.isBuffer(body) ? body : Buffer.from(body, "utf8");
+  if (chunkBytes <= 0) return void res.end(bytes);
+  for (let offset = 0; offset < bytes.length; offset += chunkBytes) {
+    res.write(bytes.subarray(offset, offset + chunkBytes));
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  res.end();
+}
+
+export function sendJsonResponse(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
+  res.writeHead(status, { "Content-Type": "application/json", ...headers });
+  res.end(JSON.stringify(body));
+}
+
+// Dependências da rota /api/check para testes que não a exercitam.
+export function testCheckDeps(overrides: Partial<CheckDeps> = {}): CheckDeps {
+  return {
+    callFetcher: () => Promise.resolve({ kind: "failed", reason: "network" }),
+    limiter: new RateLimiter({ windowMs: 3_600_000 }),
+    maxInFlightChecks: 4,
+    ...overrides,
+  };
 }

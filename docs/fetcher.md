@@ -312,8 +312,27 @@ Pior caso: 90 + 300 + R × 126 MiB, em que R é o número de requisições em an
 
 Achados 5 e 8 da primeira revisão de segurança da Fase 3, e o 503 da segunda. A API precisa cumprir isto quando passar a chamar o fetcher.
 
+**Situação na Fase 4a** (detalhes em `docs/api.md`):
+
+| Requisito | Situação |
+| --- | --- |
+| 1 | Atendido: `api/src/messages.ts` |
+| 2 | Atendido só por conta: `api/src/rate-limit.ts`. O limite por IP fica pendente (ver o item 2) |
+| 3 | Atendido: `api/src/fetcher-client.ts` |
+| 4 | Atendido: `api/src/fetcher-client.ts`, com prazo de 40 s e tetos por linha e total |
+| 5 | Atendido: `api/src/messages.ts` |
+| 6 | Atendido na API: o relatório traz `selected`, `skipReason` e os avisos. A interface fica para depois |
+
 1. **Uma única mensagem ao usuário para `blocked` e para falha de resolução de nome.** Hoje um nome que existe e resolve para IP privado devolve `blocked`, e um nome inexistente devolve `network`. Se a API repassar essa diferença, o usuário consegue enumerar nomes internos (por exemplo, zonas privadas do Cloud DNS, se um dia houver VPC). A API deve mostrar o mesmo texto genérico para `blocked` e para `network`, tanto no erro da página quanto em `media_error`. A categoria exata pode ir para métricas internas, nunca para a tela nem para a resposta da API. Pelo mesmo motivo, um DNS que não responde pode chegar como `network` ou como `timeout`, conforme o número de servidores DNS e a plataforma ("Resolução de DNS"). A API deve tratar as duas categorias da mesma forma na mensagem ao usuário, sem que a diferença entre elas apareça na tela.
-2. **Limite de taxa por usuário e por IP**, antes de chamar o fetcher. Uma única chamada a `/fetch` pode gerar até 54 requisições de saída, ou seja, 1 página + 8 mídias selecionadas, cada uma com até 5 redirecionamentos ((1 + 8) × 6). Ela também pode baixar cerca de 62 MiB (2 MiB de HTML + 60 MiB de mídia) de um alvo escolhido pelo usuário. Sem limite, a plataforma vira amplificador contra terceiros. O limite precisa valer por conta Google (o `sub` do ID token) e por IP de origem, para que várias contas no mesmo IP, ou um IP com várias contas, não escapem. Os valores e onde guardar os contadores ficam para a Fase 4. Contadores com estado exigem decisão, porque a plataforma é stateless.
+2. **Limite de taxa por usuário e por IP**, antes de chamar o fetcher. Uma única chamada a `/fetch` pode gerar até 54 requisições de saída, ou seja, 1 página + 8 mídias selecionadas, cada uma com até 5 redirecionamentos ((1 + 8) × 6). Ela também pode baixar cerca de 62 MiB (2 MiB de HTML + 60 MiB de mídia) de um alvo escolhido pelo usuário. Sem limite, a plataforma vira amplificador contra terceiros. O limite precisa valer por conta Google (o `sub` do ID token) e por IP de origem, para que várias contas no mesmo IP, ou um IP com várias contas, não escapem.
+
+   **Decisão da Fase 4:**
+   - **Por conta, implementado:** 10 verificações por hora no plano gratuito, contador em memória por instância e no máximo 2 instâncias da API (`docs/api.md`).
+   - **Por IP, pendente.** Dois motivos:
+     - atrás do Firebase Hosting, o IP do cliente só chega pelo `X-Forwarded-For`, e as entradas à esquerda desse cabeçalho são forjáveis pelo próprio cliente. Uma regra confiável exige confirmar qual entrada o Hosting e o Cloud Run acrescentam;
+     - guardar IP, mesmo em hash e só em memória, é tratamento de dado pessoal que precisa constar da política de privacidade.
+
+     Enquanto o limite por IP não existir, contas descartáveis continuam sendo o vetor de abuso. As mitigações previstas em `docs/arquitetura.md` (captcha, cota e alerta de orçamento) seguem pendentes.
 3. **Tratar `503` com `Retry-After`.** O fetcher responde `503 {"error":"Serviço ocupado"}` com `Retry-After: 1` quando a instância já tem 2 requisições em andamento ou a fila do worker está cheia. A API deve:
    - tentar de novo poucas vezes (por exemplo, até 2), com espera curta que respeite o `Retry-After` e um limite total que caiba no prazo da requisição do usuário;
    - esgotadas as tentativas, mostrar ao usuário uma mensagem clara, por exemplo "O serviço está ocupado. Tente de novo em alguns instantes.", sem repassar status, cabeçalhos ou qualquer detalhe interno do fetcher.
@@ -335,6 +354,7 @@ Achados 5 e 8 da primeira revisão de segurança da Fase 3, e o 503 da segunda. 
 
 - `extractBearerToken`, a verificação de ID token (`auth.ts`) e os auxiliares de teste (`testing.ts`) estão duplicados entre `api/src` e `fetcher/src`. A candidata é um workspace compartilhado (por exemplo `shared/`) numa fase futura.
 - `shutdown()` também está duplicado entre `api/src/server.ts` e `fetcher/src/server.ts`.
+- `domainHash()` (`api/src/http.ts` e `fetcher/src/server.ts`) e os valores do contrato NDJSON (`api/src/fetcher-contract.ts`, copiados de `fetcher/src/media.ts`, `errors.ts` e `safe-fetch.ts`) também estão duplicados. Uma mudança no contrato precisa ser feita nos dois lados.
 
 ## O que não foi testado contra a internet real
 
