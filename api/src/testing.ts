@@ -194,3 +194,113 @@ export function testCheckDeps(overrides: Partial<CheckDeps> = {}): CheckDeps {
     ...overrides,
   };
 }
+
+// ---------------------------------------------------------------------------------------------
+// ExifTools falsa: servidor HTTP local em 127.0.0.1. Os testes nunca chamam a ExifTools real.
+
+export type FakeExifToolsRequest = { method: string; path: string; headers: IncomingHttpHeaders; rawBody: Buffer };
+export type FakeExifToolsHandler = (req: FakeExifToolsRequest, res: ServerResponse) => void | Promise<void>;
+export type FakeExifTools = {
+  endpoint: string;
+  requests: FakeExifToolsRequest[];
+  maxConcurrent: () => number;
+  close: () => Promise<void>;
+};
+
+export const TEST_EXIFTOOLS_KEY = "chave-sentinela-exiftools-0123456789";
+
+export async function startFakeExifTools(handler: FakeExifToolsHandler): Promise<FakeExifTools> {
+  const requests: FakeExifToolsRequest[] = [];
+  let active = 0;
+  let peak = 0;
+  const server = createServer((req, res) => {
+    active++;
+    peak = Math.max(peak, active);
+    res.on("close", () => active--);
+    void (async () => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk as Buffer);
+      const entry = { method: req.method ?? "", path: req.url ?? "", headers: req.headers, rawBody: Buffer.concat(chunks) };
+      requests.push(entry);
+      await handler(entry, res);
+    })().catch(() => res.destroy());
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  const close = (): Promise<void> =>
+    new Promise<void>((resolve) => {
+      server.closeAllConnections();
+      server.close(() => resolve());
+    });
+  return { endpoint: `http://127.0.0.1:${port}/api/v1/extract`, requests, maxConcurrent: () => peak, close };
+}
+
+// Lê o multipart recebido com o parser nativo (Request.formData), sem dependência nova.
+export function parseMultipart(req: FakeExifToolsRequest): Promise<FormData> {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (typeof value === "string") headers.set(name, value);
+  }
+  return new Request("http://fake.invalid/", { method: "POST", headers, body: req.rawBody }).formData();
+}
+
+// Resposta de sucesso no formato do exemplo de docs/apis/documentacao-exif.md.
+export function exifSuccess(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    success: true,
+    status: "completed",
+    fileName: "media.jpg",
+    uuid: "123e4567-e89b-12d3-a456-426614174000",
+    processedAt: "2026-03-15T10:31:02+00:00",
+    createDate: "2026-03-15 10:30:00",
+    fileSize: "4.2 MB",
+    fileSizeBytes: 4404019,
+    mimeType: "image/jpeg",
+    dimensions: "8192x5464",
+    cameraModel: "Canon EOS R5",
+    metadata: {
+      File: {
+        FileType: "JPEG",
+        MIMEType: "image/jpeg",
+        FileSize: "4.2 MB",
+        ImageWidth: 8192,
+        ImageHeight: 5464,
+        SHA256: "a5e50cbe66078249973d9a71230c4a8edbaedc26af11204042d3bce1f9ed4409",
+      },
+      EXIF: {
+        Make: "Canon",
+        Model: "Canon EOS R5",
+        DateTimeOriginal: "2026:03:15 10:30:00",
+        ExposureTime: "1/1000",
+        FNumber: 2.8,
+        ISO: 100,
+      },
+    },
+    ...overrides,
+  };
+}
+
+// Bloco contentCredentials no formato do exemplo da documentação.
+export function contentCredentials(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    state: "trusted_legacy",
+    signer: "Adobe Inc.",
+    certificateName: "cai-prod",
+    trustList: "itl",
+    signedAt: "2023-10-02T16:51:02+00:00",
+    timestamped: true,
+    algorithm: "Ps256",
+    generator: "Adobe Firefly 1.0",
+    title: "Generated image",
+    aiGenerated: true,
+    digitalSourceTypes: ["ai"],
+    actions: [{ action: "c2pa.created", softwareAgent: "Adobe Firefly", digitalSourceType: "ai" }],
+    ingredients: [],
+    creator: [],
+    aiTraining: [],
+    checks: [{ code: "assertion.dataHash.match", outcome: "success" }],
+    manifestUrl: "https://exiftools.com/results/123e4567-e89b-12d3-a456-426614174000/credentials?format=manifest",
+    checkedAt: "2026-10-15T16:36:48+00:00",
+    ...overrides,
+  };
+}

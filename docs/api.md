@@ -2,7 +2,7 @@
 
 Serviço Node.js no Cloud Run, atrás do Firebase Hosting (`/api/**`). Valida o login, aplica o limite do plano, chama o fetcher e devolve o relatório. É stateless: nada vai para disco ou banco, e os bytes das mídias só existem na memória durante a requisição.
 
-Fase 4a: `POST /api/check` devolve página e mídias, sem os sinais da ExifTools (que entram na 4c).
+Fase 4a: `POST /api/check` devolve página e mídias, sem os sinais da ExifTools. Fase 4b: o cliente ExifTools e a lista permitida estão prontos e testados, mas ainda não são usados pela rota (isso entra na 4c). Ver "ExifTools", abaixo.
 
 ## Rotas
 
@@ -88,6 +88,73 @@ O 504 vale para qualquer prazo esgotado antes da linha `done`, inclusive quando 
   Qualquer desvio vira 502 genérico.
 - **Corpo de erro do fetcher:** nunca é repassado. Do 422 só se aproveitam a categoria conhecida e o `httpStatus` válido.
 - **Cancelamento:** se o usuário fecha a conexão, a chamada ao fetcher é abortada.
+
+## ExifTools
+
+`api/src/exiftools-client.ts` e `api/src/metadata-allowlist.ts`. Documentação do serviço: `docs/apis/documentacao-exif.md`.
+
+### Cliente
+
+- **Só o arquivo.** A API envia os bytes já baixados pelo fetcher, em multipart, num único campo `file`, com nome genérico derivado do content-type (`media.jpg`, `media.mov`, `media.bin`…), nunca o nome original. Nunca usa os modos `url` nem `data_url`: a ExifTools não pode buscar nada por conta própria, porque isso contornaria o fetcher e vazaria a URL do usuário. A função do cliente nem recebe URL.
+- **Endereço fixo:** `https://exiftools.com/api/v1/extract`, sem variável de ambiente para trocar o destino. Os testes passam o endereço do servidor falso pelas opções do cliente.
+- **Chave só no cabeçalho `X-API-Key`**, nunca em `?key=`. Ela vem de `EXIFTOOLS_API_KEY` (obrigatória a partir da 4c) e nunca aparece em log, resultado ou mensagem de erro.
+- **Redirecionamento:** não é seguido (`redirect: "manual"`), porque o cabeçalho com a chave iria junto para outro host. Um redirecionamento vira `invalid`.
+- **Prazo:** 15 s por chamada, limitado pelo prazo total da checagem.
+- **Resposta:** até 2 MiB. Um `Content-Length` maior é recusado sem ler o corpo, e a leitura em fluxo para no primeiro pedaço que passa do limite.
+- **Nunca lança:** toda falha vira um status, e o erro original é descartado.
+
+| Resposta da ExifTools | Status no resultado | Nova tentativa |
+| --- | --- | --- |
+| 200 com `success: true` | `ok` | não |
+| 200 com outro corpo, JSON inválido ou acima de 2 MiB | `invalid` | não |
+| 400, outros 4xx, redirecionamento | `invalid` | não |
+| 401, 403 | `config_error` (chave inválida: erro nosso, vai para o log interno; o usuário vê "indisponível") | não |
+| 413 | `too_large` | não |
+| 415 | `unsupported` | não |
+| 429, 5xx, timeout, erro de rede | `unavailable` | no máximo uma, depois do `Retry-After` (teto de 2 s; sem cabeçalho válido, 1 s), e só se sobrarem 5 s do prazo depois da espera |
+| `EXIFTOOLS_API_KEY` vazia | `config_error`, sem requisição | não |
+
+**Códigos não documentados:** a documentação da ExifTools só lista 400, 401 e 500 para `/extract`. 413 e 415 aparecem só em `/remove`, e 429 não aparece em lugar nenhum. O cliente trata todos de forma defensiva; o comportamento real precisa ser confirmado.
+
+### Lista permitida de sinais
+
+Nada da resposta da ExifTools é repassado em bloco. Cada campo é escolhido, com tipo conferido. Um campo com tipo inesperado vira `null` (ou lista vazia) e não derruba os outros. O texto passa por uma limpeza:
+- sem controles (C0, DEL, C1) nem caracteres de formato Unicode, como o U+202E;
+- cortado em 256 caracteres (64 nos campos curtos);
+- bem formado.
+
+HTML continua sendo texto: quem exibe escapa.
+
+| Sinal | Origem |
+| --- | --- |
+| `fileType`, `mimeType` | `metadata.File.FileType`; `mimeType` (ou `metadata.File.MIMEType`) |
+| `width`, `height` | `metadata.File.ImageWidth` / `ImageHeight`, inteiros positivos |
+| `sha256` | o calculado pelo fetcher e conferido pela API (não o da ExifTools) |
+| `dates[]` `{tag, value}` | `EXIF:DateTimeOriginal`, `EXIF:CreateDate`, `EXIF:ModifyDate`, `XMP:CreateDate`, `XMP:ModifyDate`, `XMP:MetadataDate`. As datas do sistema de arquivos do servidor da ExifTools (`File.FileModifyDate`…) ficam de fora |
+| `camera` `{make, model}` | `EXIF.Make`, `EXIF.Model` |
+| `software[]` | `EXIF.Software`, `EXIF.ProcessingSoftware`, `XMP.CreatorTool`, `XMP.HistorySoftwareAgent`, sem repetição, até 10 |
+| `containsLocation` | `true` se houver `GPS.GPSLatitude`/`GPSLongitude`, `Composite.GPSPosition`/`GPSLatitude`/`GPSLongitude` ou `XMP.GPSLatitude`/`GPSLongitude`. **Nunca as coordenadas** |
+| `containsAuthorship` | `true` se houver `author`, `IPTC.By-line`, `IPTC.CopyrightNotice`, `EXIF.Artist`, `EXIF.Copyright`, `XMP.Creator`, `XMP.Rights` ou `contentCredentials.creator`. **Nunca o nome nem o aviso de copyright** |
+| `c2pa` (ou `null`) | de `contentCredentials`: `state`, `reason`, `signer`, `certificateName`, `trustList`, `signedAt`, `timestamped`, `generator`, `aiGenerated`, `digitalSourceTypes` (até 10), `actions` (até 20, só `action`, `softwareAgent` e `digitalSourceType`), `checks` (até 50, só `code` e `outcome`), `ingredientCount` e `remoteHost` |
+
+**Nunca saem:**
+- identificadores e metadados da própria ExifTools: `uuid`, `fileName`, `processedAt`;
+- o `manifestUrl` do bloco C2PA, que é um link com o UUID do resultado guardado na ExifTools;
+- outros campos do bloco C2PA: `creator`, `title`, `aiTraining`, `algorithm`, `checkedAt` e o conteúdo de `ingredients` (a árvore não é documentada, então só a contagem);
+- coordenadas e qualquer outra tag GPS;
+- números de série (`SerialNumber`, `BodySerialNumber`, `InternalSerialNumber`);
+- `MakerNotes`, `ICC_Profile`, o IPTC inteiro;
+- `author`, `cameraModel` e `dimensions` de nível superior;
+- qualquer grupo ou campo não listado acima.
+
+**A confirmar com a ExifTools real:**
+- os nomes das tags dentro de `XMP`, `GPS` e `Composite`. São os nomes padrão do ExifTool, mas a documentação só diz que os grupos seguem esses nomes;
+- vídeo (grupo `QuickTime`), que não aparece documentado e fica de fora por enquanto;
+- a estrutura de `ingredients`.
+
+**Avisos fixos no relatório (a partir da 4c):** "A revogação de certificados C2PA não é verificada online." e "Um signatário confiável indica quem gerou o arquivo, não que o conteúdo seja verdadeiro."
+
+**Retenção do lado da ExifTools:** os resultados são recuperáveis por UUID, o que indica que a ExifTools guarda alguma coisa. A API nunca repassa o UUID, mas o arquivo enviado pode conter GPS e autoria. Ver `docs/politica-privacidade.md`.
 
 ## Limite por usuário (plano gratuito)
 

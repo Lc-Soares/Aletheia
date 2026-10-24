@@ -60,7 +60,7 @@ Uma verificação é uma única requisição em streaming, do login ao descarte 
 10. O navegador monta o relatório e o usuário baixa PDF ou JSON.
 11. O servidor descarta tudo em um bloco finally. Nada vai para disco ou banco.
 
-No passo 8, a ExifTools pode receber a URL da mídia (modo url) para poupar banda, com envio do arquivo (data\_url ou multipart) como alternativa quando a mídia não for acessível publicamente.
+No passo 8, a ExifTools recebe **sempre o arquivo** já baixado pelo fetcher, em multipart, e nunca a URL da mídia (decisão da Fase 4). Os modos `url` e `data_url` com URL fariam a ExifTools buscar a mídia por conta própria: isso contornaria o fetcher isolado e as proteções contra SSRF, e entregaria a terceiros o endereço que o usuário analisou. Detalhes em `docs/api.md`.
 
 ## Integrações externas
 
@@ -68,7 +68,7 @@ Cinco serviços externos alimentam o relatório; todas as chaves ficam no Secret
 
 | Serviço | Uso | Entrada e saída | Pontos a observar |
 | --- | --- | --- | --- |
-| API ExifTools | EXIF, IPTC, XMP, GPS e verificação C2PA | POST /extract com url, file ou data\_url; devolve metadata e, quando há credenciais, o bloco contentCredentials | Chave no header X-API-Key (o parâmetro ?key= vaza em logs). Limite de 100 MB por envio e 2 GB por URL. A documentação não informa limites de requisição, preço, retenção nem SLA. Resultados são recuperáveis por UUID, o que indica retenção do lado deles. |
+| API ExifTools | EXIF, IPTC, XMP, GPS e verificação C2PA | POST /extract com url, file ou data\_url (usamos só file, em multipart); devolve metadata e, quando há credenciais, o bloco contentCredentials | Chave no header X-API-Key (o parâmetro ?key= vaza em logs). Limite de 100 MB por envio. A documentação não informa limites de requisição, preço, retenção nem SLA. Resultados são recuperáveis por UUID, o que indica retenção do lado deles. |
 | Google Fact Check Tools | Achar checagens já publicadas sobre a afirmação | claims.search recebe o texto da afirmação | O recurso pages é para publicadores criarem marcação ClaimReview e não serve a este caso. |
 | Cloud Vision, Web Detection | Busca reversa: onde a imagem já circulou | Imagem em bytes; devolve páginas e entidades correspondentes | Serviço pago: definir cota diária e alerta de orçamento antes de habilitar. |
 | Web Risk | Reputação da URL (malware, phishing) | URL; devolve ameaças conhecidas | A Safe Browsing gratuita é restrita a uso não comercial; confirmar os termos antes de escolher. |
