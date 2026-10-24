@@ -317,3 +317,52 @@ describe("verificar sessão", () => {
     assert.deepEqual(touched, []);
   });
 });
+
+describe("status do painel depois de um novo login", () => {
+  test("login com token novo limpa 'Sessão expirada, entre novamente'", async () => {
+    const { session, elements } = setupCheck({ responses: [status(401)], renewToken: async () => null });
+    session.setToken(TOKEN_1);
+    await session.verify();
+    assert.equal(elements.status.textContent, "Sessão expirada, entre novamente");
+    session.setToken(TOKEN_2);
+    assert.equal(elements.status.textContent, "");
+  });
+
+  test("login com token novo limpa também 'Sessão ativa', 'Token renovado' e o erro", async () => {
+    /** @type {Array<[FakeResponse[], string | null, string]>} */
+    const cases = [
+      [[ok({ email: EMAIL })], null, "Sessão ativa"],
+      [[status(401), ok({ email: EMAIL })], TOKEN_2, "Token renovado"],
+      [[status(500)], null, "Não foi possível verificar a sessão"],
+    ];
+    for (const [responses, renewed, text] of cases) {
+      const { session, elements } = setupCheck({ responses, renewToken: async () => renewed });
+      session.setToken(TOKEN_1);
+      await session.verify();
+      assert.equal(elements.status.textContent, text);
+      session.setToken(jwt("3"));
+      assert.equal(elements.status.textContent, "");
+    }
+  });
+
+  test("setToken(null) não apaga o resultado mostrado", async () => {
+    const { session, elements } = setupCheck({ responses: [status(401)], renewToken: async () => null });
+    session.setToken(TOKEN_1);
+    await session.verify();
+    session.setToken(null);
+    assert.equal(elements.status.textContent, "Sessão expirada, entre novamente");
+  });
+
+  test("a renovação feita dentro de uma chamada não limpa o resultado do painel", async () => {
+    const { session, elements } = setupCheck({
+      responses: [ok({ email: EMAIL }), status(401), ok({ email: EMAIL })],
+      renewToken: async () => TOKEN_2,
+    });
+    session.setToken(TOKEN_1);
+    await session.verify();
+    assert.equal(elements.status.textContent, "Sessão ativa");
+    // Renovação por 401 em loadMe (sem passar pelo botão): o texto anterior continua até o próximo resultado.
+    await session.loadMe();
+    assert.equal(elements.status.textContent, "Sessão ativa");
+  });
+});

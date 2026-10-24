@@ -22,10 +22,11 @@ const RENEW_DEADLINE_MS = 15_000;
  * @property {(busy: boolean) => void} setBusy
  * @property {(kind: CheckResult) => void} showResult
  * @property {(date: Date | null) => void} showExpiry
+ * @property {() => void} clearResult
  */
 
 /** @type {CheckUi} */
-const NO_CHECK_UI = { show() {}, setBusy() {}, showResult() {}, showExpiry() {} };
+const NO_CHECK_UI = { show() {}, setBusy() {}, showResult() {}, showExpiry() {}, clearResult() {} };
 
 /**
  * Resolve com null se a promessa não responder dentro do prazo (ou rejeitar).
@@ -58,9 +59,17 @@ export function createSession({ fetchFn, renewToken, ui, checkUi = NO_CHECK_UI, 
   let verifying = false;
 
   /** @param {string | null} value */
-  function setToken(value) {
+  function storeToken(value) {
     token = value;
     checkUi.showExpiry(value === null ? null : expiryOf(value));
+  }
+
+  // Token novo vindo do login: o resultado antigo do painel ("Sessão expirada...") deixa de valer.
+  // A renovação interna usa storeToken e não passa por aqui.
+  /** @param {string | null} value */
+  function setToken(value) {
+    storeToken(value);
+    if (value !== null) checkUi.clearResult();
   }
 
   /** @returns {Promise<string | null>} */
@@ -90,13 +99,13 @@ export function createSession({ fetchFn, renewToken, ui, checkUi = NO_CHECK_UI, 
       return "error";
     }
     if (response.status === 401) {
-      setToken(null);
+      storeToken(null);
       const renewed = canRenew ? await renew() : null;
       if (renewed === null) {
         ui.showExpired();
         return "expired";
       }
-      setToken(renewed);
+      storeToken(renewed);
       const retried = await loadMe(false);
       return retried === "active" ? "renewed" : retried;
     }

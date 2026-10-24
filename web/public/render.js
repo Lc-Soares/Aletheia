@@ -31,6 +31,9 @@ export function createSessionCheckUi({ panel, button, status, expiry }) {
     showResult(kind) {
       status.textContent = CHECK_TEXT[kind];
     },
+    clearResult() {
+      status.textContent = "";
+    },
     showExpiry(date) {
       expiry.textContent = date === null ? "" : `Token expira às ${formatExpiry(date)}`;
     },
