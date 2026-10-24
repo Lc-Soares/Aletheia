@@ -99,7 +99,7 @@ export function inlineExtractor(limits: ExtractLimits = DEFAULT_LIMITS): Extract
 // Worker de extração falso (URL data:) que responde uma página vazia depois de `delayMs`.
 export function slowWorker(delayMs: number): URL {
   const code = `import { parentPort } from "node:worker_threads";
-    setTimeout(() => parentPort.postMessage({ title: null, headline: null, media: [] }), ${delayMs});`;
+    setTimeout(() => parentPort.postMessage({ title: null, headline: null, media: [], possiblyNeedsJavaScript: false }), ${delayMs});`;
   return new URL(`data:text/javascript,${encodeURIComponent(code)}`);
 }
 
@@ -135,6 +135,54 @@ ${paragraph(i).repeat(4)}</article>\n`;
   for (let i = 0; head.length + body.length < targetBytes; i++) body += card(i);
   return `${head}<main>${body}</main></body></html>`;
 }
+
+// Fixtures da seleção de mídias, escritas à mão. Imitam só a ESTRUTURA de páginas reais (srcset
+// com muitos tamanhos, <picture>, ícones no cabeçalho, pixel de rastreamento, casca de SPA); o
+// conteúdo é inventado.
+const widths = [320, 480, 640, 800, 1024, 1280, 1600];
+
+// <img> com src + 7 candidatos w: 8 variantes da mesma foto; a maior é 1600w.
+export const SRCSET_8_VARIANTS = `<img src="/fotos/principal.jpg" srcset="${widths
+  .map((w) => `/fotos/principal-${w}.jpg ${w}w`)
+  .join(", ")}" sizes="(max-width: 800px) 100vw, 800px" alt="Foto principal">`;
+
+// <picture> com avif e webp em 3 larguras e o <img> interno: um grupo; a maior é o avif 1600w.
+export const PICTURE_8_VARIANTS = `<picture>
+<source type="image/avif" srcset="/fotos/segunda-400.avif 400w, /fotos/segunda-800.avif 800w, /fotos/segunda-1600.avif 1600w">
+<source type="image/webp" srcset="/fotos/segunda-400.webp 400w, /fotos/segunda-800.webp 800w, /fotos/segunda-1600.webp 1600w">
+<img src="/fotos/segunda.jpg" srcset="/fotos/segunda-1200.jpg 1200w" alt="Segunda foto"></picture>`;
+
+// Matéria com og:image, imagens no <article>, ícones no <header>/<nav>, imagem lateral em
+// <aside>, SVG, selo pequeno e pixel 1x1 no <footer>.
+export function newsArticleFixture(): string {
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Matéria de exemplo</title>
+<meta property="og:image" content="https://cdn.example/og/capa-1200.jpg">
+<script src="/static/app.js"></script></head><body>
+<header class="topo"><a href="/"><img class="site-logo" src="/assets/marca.png" alt="Portal"></a>
+<nav><img src="/assets/menu.png" width="24" height="24" alt=""><img class="icon icon-busca" src="/assets/busca.png" alt=""></nav></header>
+<main><article><h1>Manchete inventada</h1>
+<figure>${SRCSET_8_VARIANTS}<figcaption>Legenda</figcaption></figure>
+<p>${"Texto corrido da matéria, escrito só para o teste. ".repeat(20)}</p>
+<figure>${PICTURE_8_VARIANTS}</figure>
+<img src="/graficos/evolucao.svg" alt="Gráfico">
+</article><aside><img src="/fotos/relacionada.jpg" alt="Outra matéria"></aside></main>
+<footer><img src="/assets/selo.png" width="88" height="31" alt="Selo"><img src="https://rastreio.example/p.gif" width="1" height="1" alt=""></footer>
+</body></html>`;
+}
+
+// Casca de aplicação de página única: título genérico, script, ponto de montagem vazio.
+export const SPA_SHELL_FIXTURE = `<!doctype html><html><head><title>Portal</title>
+<script src="/static/js/main.3f2a.js" defer></script></head>
+<body><div id="root"></div><noscript>Ative o JavaScript para usar este site.</noscript></body></html>`;
+
+// Página estática curta, sem script e sem mídia (no estilo de example.com).
+export const SHORT_STATIC_FIXTURE = `<!doctype html><html><head><title>Domínio de exemplo</title>
+<style>body{margin:0}</style></head><body><div><h1>Domínio de exemplo</h1>
+<p>Este domínio serve para exemplos em documentos.</p><p><a href="/mais">Mais informações</a></p></div></body></html>`;
+
+// Matéria só de texto, com scripts, sem imagens: conteúdo suficiente, sem sinal de JavaScript.
+export const TEXT_ONLY_FIXTURE = `<!doctype html><html><head><title>Coluna</title><script>window.analytics=[]</script></head>
+<body><main><article><h1>Coluna de opinião</h1>${"<p>Parágrafo de texto da coluna, sem nenhuma imagem.</p>".repeat(30)}</article></main></body></html>`;
 
 // Servidor DNS UDP local para exercitar o c-ares de verdade, sem internet. Responde A e AAAA da
 // tabela, NOERROR sem resposta para tipo ausente (c-ares: ENODATA) e NXDOMAIN para nome ausente

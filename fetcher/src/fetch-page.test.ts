@@ -17,9 +17,12 @@ import {
   html,
   image,
   inlineExtractor,
+  newsArticleFixture,
   redirect,
   routeTransport,
   slowWorker,
+  SPA_SHELL_FIXTURE,
+  SRCSET_8_VARIANTS,
 } from "./testing.ts";
 import type { Transport } from "./transport.ts";
 
@@ -56,15 +59,17 @@ describe("fetchPage", () => {
     assert.equal(result.headline, "Manchete");
     assert.equal(result.finalUrl, "https://noticias.example/materia");
     assert.equal(result.media.length, 4);
+    // foto.png e foto-2x.webp são o mesmo <img>: baixa só a maior (2x).
     assert.deepEqual(
-      result.downloads.map((d) => [d.url, ok(d).contentType, ok(d).sha256, ok(d).size]),
+      result.downloads.map((d) => [d.url, d.group, ok(d).contentType, ok(d).sha256, ok(d).size]),
       [
-        ["https://cdn.example/capa.jpg", "image/jpeg", sha256("JPEG"), 4],
-        ["https://noticias.example/foto.png", "image/png", sha256("PNG"), 3],
-        ["https://noticias.example/foto-2x.webp", "image/webp", sha256("WEBP"), 4],
-        ["https://cdn.example/v.mp4", "video/mp4", sha256("MP4"), 3],
+        ["https://cdn.example/capa.jpg", 1, "image/jpeg", sha256("JPEG"), 4],
+        ["https://noticias.example/foto-2x.webp", 2, "image/webp", sha256("WEBP"), 4],
+        ["https://cdn.example/v.mp4", 3, "video/mp4", sha256("MP4"), 3],
       ],
     );
+    assert.equal(transport.calls.some((c) => c.url.pathname === "/foto.png"), false);
+    assert.equal(result.possiblyNeedsJavaScript, false);
     assert.equal(ok(result.downloads[0]).bytes.toString(), "JPEG");
   });
 
@@ -105,7 +110,7 @@ describe("fetchPage", () => {
     assert.deepEqual(transport.calls.map((c) => c.url.href), ["https://noticias.example/"]);
   });
 
-  test("mais de 20 mídias: lista todas, baixa só 20", async () => {
+  test("25 mídias: lista todas, baixa só maxSelectedMedia (8)", async () => {
     const routes: Record<string, FakeResponse> = {
       "https://noticias.example/": html(Array.from({ length: 25 }, (_, i) => `<img src="/m${i}.jpg">`).join("")),
     };
@@ -113,8 +118,44 @@ describe("fetchPage", () => {
     const transport = routeTransport(routes);
     const result = await fetchPage("https://noticias.example/", deps(transport));
     assert.equal(result.media.length, 25);
-    assert.equal(result.downloads.length, 20);
-    assert.equal(transport.calls.length, 21);
+    assert.equal(result.downloads.length, 8);
+    assert.equal(transport.calls.length, 9);
+    assert.equal(result.media.filter((m) => m.skipReason === "limit").length, 17);
+  });
+
+  test("nunca mais de maxSelectedMedia conexões de mídia, mesmo com muitos grupos e variantes", async () => {
+    const images = Array.from({ length: 30 }, (_, i) => `<img src="/m${i}.jpg" srcset="/m${i}-a.jpg 400w, /m${i}-b.jpg 800w">`).join("");
+    const transport = fakeTransport((req) => (req.url.pathname === "/" ? html(images) : image("x")));
+    const result = await fetchPage("https://noticias.example/", deps(transport, { maxSelectedMedia: 5 }));
+    assert.equal(result.downloads.length, 5);
+    assert.equal(transport.calls.length, 6);
+    assert.ok(result.downloads.every((d) => d.url.endsWith("-b.jpg")));
+  });
+
+  test("imagem com 8 variantes: uma conexão, só para a maior", async () => {
+    const transport = fakeTransport((req) => (req.url.pathname === "/" ? html(`<article>${SRCSET_8_VARIANTS}</article>`) : image("x")));
+    const result = await fetchPage("https://noticias.example/", deps(transport));
+    assert.equal(result.media.length, 8);
+    assert.deepEqual(transport.calls.map((c) => c.url.pathname), ["/", "/fotos/principal-1600.jpg"]);
+  });
+
+  test("SVG e ícones são ignorados sem conexão nenhuma, e não viram erro", async () => {
+    const transport = fakeTransport((req) =>
+      req.url.pathname === "/" ? html(newsArticleFixture()) : image("x"),
+    );
+    const result = await fetchPage("https://noticias.example/", deps(transport));
+    const paths = transport.calls.map((c) => c.url.pathname);
+    for (const ignored of ["/graficos/evolucao.svg", "/assets/marca.png", "/assets/menu.png", "/assets/busca.png", "/assets/selo.png", "/p.gif"]) {
+      assert.equal(paths.includes(ignored), false, ignored);
+    }
+    assert.ok(result.downloads.every((d) => d.ok));
+    assert.equal(result.downloads.length, result.media.filter((m) => m.selected).length);
+  });
+
+  test("casca de SPA: nenhuma mídia e o sinal de JavaScript chega ao resultado", async () => {
+    const transport = routeTransport({ "https://noticias.example/": html(SPA_SHELL_FIXTURE) });
+    const result = await fetchPage("https://noticias.example/", deps(transport));
+    assert.deepEqual([result.media.length, result.downloads.length, result.possiblyNeedsJavaScript], [0, 0, true]);
   });
 
   test("mídia acima do limite vira item com erro; as outras seguem", async () => {
@@ -191,6 +232,28 @@ describe("fetchPage", () => {
     const transport = routeTransport({ "https://noticias.example/": html("<title>x</title>") });
     const extract = Object.assign(() => Promise.reject(new OverloadedError()), { active: 0 });
     await assert.rejects(fetchPage("https://noticias.example/", { ...deps(transport), extract }), OverloadedError);
+  });
+
+  test("mídia com erro HTTP: upstream_status com o código; outras falhas sem código", async () => {
+    const transport = routeTransport({
+      "https://noticias.example/": html(`<img src="/sumiu.jpg"><img src="http://interno.example/b.jpg">`),
+    });
+    const result = await fetchPage("https://noticias.example/", deps(transport));
+    assert.deepEqual(
+      result.downloads.map((d) => (d.ok ? "ok" : [d.error, d.httpStatus])),
+      [
+        ["upstream_status", 404],
+        ["blocked", undefined],
+      ],
+    );
+  });
+
+  test("página com erro HTTP: upstream_status com o código", async () => {
+    const transport = routeTransport({ "https://noticias.example/": { status: 503, headers: { "content-type": "text/html" } } });
+    await assert.rejects(
+      fetchPage("https://noticias.example/", deps(transport)),
+      (error: unknown) => error instanceof FetchError && error.category === "upstream_status" && error.httpStatus === 503,
+    );
   });
 
   test("falha da página inteira lança erro com categoria", async () => {

@@ -8,7 +8,17 @@ import { describe, test } from "node:test";
 import { isPublicAddress } from "../src/ip-policy.ts";
 import { resolveLimits } from "../src/limits.ts";
 import type { PageDeps } from "../src/fetch-page.ts";
-import { fakeResolver, html, image, inlineExtractor, routeTransport, startFakeDnsServer } from "../src/testing.ts";
+import {
+  type FakeResponse,
+  fakeResolver,
+  html,
+  image,
+  inlineExtractor,
+  newsArticleFixture,
+  routeTransport,
+  SPA_SHELL_FIXTURE,
+  startFakeDnsServer,
+} from "../src/testing.ts";
 import { formatResult, formatSummary, main, parseUrlList, runOne, sanitize, summarize } from "./try-fetch.ts";
 
 const MEDIA_BYTES = "BYTES-DA-MIDIA-QUE-NAO-PODEM-APARECER";
@@ -32,6 +42,82 @@ function pageDeps(title = "Título da página"): PageDeps & { transport: ReturnT
     extract: inlineExtractor(limits),
   };
 }
+
+// Página montada com as rotas dadas, sem internet (mesmas dependências do pageDeps).
+function routesDeps(routes: Record<string, FakeResponse>): PageDeps {
+  const limits = resolveLimits();
+  return {
+    resolver: fakeResolver({ "noticias.example": ["93.184.216.34"], "cdn.example": ["93.184.216.35"] }),
+    transport: routeTransport(routes),
+    policy: isPublicAddress,
+    limits,
+    extract: inlineExtractor(limits),
+  };
+}
+
+describe("try-fetch: grupos, seleção, motivos e sinais", () => {
+  const article = () =>
+    routesDeps({
+      "https://noticias.example/materia": html(newsArticleFixture()),
+      "https://cdn.example/og/capa-1200.jpg": image(MEDIA_BYTES),
+      "https://noticias.example/fotos/principal-1600.jpg": image("principal"),
+      "https://noticias.example/fotos/segunda-1600.avif": image("segunda", "image/avif"),
+    });
+
+  test("cada mídia listada traz grupo, pontuação e situação (baixada, erro ou ignorada com motivo)", async () => {
+    const result = await runOne("https://noticias.example/materia", article());
+    assert.ok(result.ok);
+    assert.equal(result.listed, result.media.length);
+    assert.equal(result.groups, 10);
+    const lead = (name: string) => result.media.find((m) => m.url.endsWith(name) && m.skipReason !== "variant");
+    assert.deepEqual([lead("capa-1200.jpg")?.status, lead("capa-1200.jpg")?.group, lead("capa-1200.jpg")?.score], ["downloaded", 1, 100]);
+    assert.deepEqual([lead("evolucao.svg")?.status, lead("evolucao.svg")?.skipReason], ["ignored", "unsupported_format"]);
+    assert.deepEqual([lead("marca.png")?.status, lead("marca.png")?.skipReason], ["ignored", "icon"]);
+    assert.deepEqual([lead("relacionada.jpg")?.status, lead("relacionada.jpg")?.error, lead("relacionada.jpg")?.httpStatus], ["error", "upstream_status", 404]);
+    assert.equal(result.media.filter((m) => m.skipReason === "variant").length, 14);
+  });
+
+  test("a saída mostra grupos em ordem, pontuação, variantes, motivos em português e o HTTP", async () => {
+    const text = formatResult(await runOne("https://noticias.example/materia", article()));
+    for (const expected of [
+      "grupo 1 · pontuação 100 · baixada",
+      "(+7 variantes)",
+      "ignorada: formato não analisável (SVG)",
+      "ignorada: ícone ou elemento de interface",
+      "erro: upstream_status (HTTP 404)",
+    ]) {
+      assert.ok(text.includes(expected), expected);
+    }
+    assert.ok(text.indexOf("grupo 2 ") < text.indexOf("grupo 10 "));
+    assert.ok(!text.includes(MEDIA_BYTES), "bytes da mídia");
+    assert.ok(!text.includes("possivelmente depende de JavaScript"));
+    for (const line of text.split("\n")) assert.doesNotMatch(line, /[\p{Cc}\p{Cf}]/u, JSON.stringify(line));
+  });
+
+  test("casca de SPA: a saída traz o sinal de JavaScript, marcado como heurística", async () => {
+    const result = await runOne("https://noticias.example/app", routesDeps({ "https://noticias.example/app": html(SPA_SHELL_FIXTURE) }));
+    assert.ok(result.ok);
+    assert.equal(result.possiblyNeedsJavaScript, true);
+    assert.match(formatResult(result), /sinal \(heurística\): a página possivelmente depende de JavaScript/);
+  });
+
+  test("erro HTTP da página: categoria e código, nada mais", async () => {
+    const secret = "CORPO-SECRETO-DO-SITE";
+    const deps = routesDeps({ "https://noticias.example/x": { status: 403, headers: { "content-type": "text/html", "x-detalhe": secret }, body: secret } });
+    const result = await runOne("https://noticias.example/x", deps);
+    assert.deepEqual(result.ok ? null : [result.error, result.httpStatus], ["upstream_status", 403]);
+    const text = formatResult(result);
+    assert.match(text, /erro: upstream_status \(HTTP 403\)/);
+    assert.ok(!text.includes(secret));
+  });
+
+  test("resumo conta as mídias ignoradas por motivo", async () => {
+    const summary = summarize([await runOne("https://noticias.example/materia", article())]);
+    assert.deepEqual(summary.ignored, { unsupported_format: 1, icon: 5, variant: 14 });
+    assert.deepEqual(summary.mediaErrors, { upstream_status: 1 });
+    assert.match(formatSummary(summary), /mídias ignoradas: .*icon: 5/);
+  });
+});
 
 describe("try-fetch: resultado de uma URL", () => {
   test("página, mídias, hash de 12 caracteres, categorias de erro e tempos", async () => {
@@ -91,7 +177,20 @@ describe("try-fetch: higienização de texto de terceiros", () => {
       listed: 1,
       attempted: 1,
       downloaded: 1,
-      media: [{ url: "https://x.example/⁦a.jpg", kind: "image", contentType: "image/jpeg\u0007", size: 1, sha256: "0123456789ab" }],
+      groups: 1,
+      possiblyNeedsJavaScript: false,
+      media: [
+        {
+          url: "https://x.example/⁦a.jpg",
+          kind: "image",
+          group: 1,
+          score: 0,
+          status: "downloaded",
+          contentType: "image/jpeg\u0007",
+          size: 1,
+          sha256: "0123456789ab",
+        },
+      ],
       timings: { pageMs: 1, extractMs: 1, mediaMs: 1, totalMs: 3 },
     });
     for (const line of text.split("\n")) assert.doesNotMatch(line, /[\p{Cc}\p{Cf}]/u, JSON.stringify(line));
@@ -120,6 +219,7 @@ describe("try-fetch: lista de URLs e resumo", () => {
       ok: 1,
       pageErrors: { blocked: 2 },
       mediaErrors: { blocked: 1, too_large: 1 },
+      ignored: {},
     });
     const text = formatSummary(summary);
     assert.match(text, /1 de 3/);

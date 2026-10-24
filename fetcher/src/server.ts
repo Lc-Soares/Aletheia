@@ -103,10 +103,14 @@ async function readJsonUrl(req: IncomingMessage): Promise<string> {
 }
 
 function mediaLine(download: MediaDownload): Record<string, unknown> {
-  const { url, kind, source } = download;
-  if (!download.ok) return { type: "media_error", url, kind, source, error: download.error };
+  const { url, kind, source, group } = download;
+  if (!download.ok) {
+    const { error, httpStatus } = download;
+    const line = { type: "media_error", url, kind, source, group, error };
+    return httpStatus === undefined ? line : { ...line, httpStatus };
+  }
   const { contentType, size, sha256, bytes } = download;
-  return { type: "media", url, kind, source, contentType, size, sha256, data: bytes.toString("base64") };
+  return { type: "media", url, kind, source, group, contentType, size, sha256, data: bytes.toString("base64") };
 }
 
 // Respostas que o PRÓPRIO fetcher destruiu. A categoria é registrada antes do destroy(), então o
@@ -156,8 +160,8 @@ async function streamResult(
   const signals: StreamSignals = { request, total: AbortSignal.timeout(limits.streamTotalMs), idleMs: limits.streamIdleMs };
   res.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", ...SECURITY_HEADERS });
   try {
-    const { finalUrl, title, headline, media } = result;
-    await writeLine(res, { type: "page", finalUrl, title, headline, media }, signals);
+    const { finalUrl, title, headline, media, possiblyNeedsJavaScript } = result;
+    await writeLine(res, { type: "page", finalUrl, title, headline, possiblyNeedsJavaScript, media }, signals);
     for (const download of result.downloads) await writeLine(res, mediaLine(download), signals);
     await writeLine(res, { type: "done" }, signals);
     res.end();
@@ -192,7 +196,8 @@ async function fetchAndStream(
     if (error instanceof OverloadedError) throw busy();
     if (!(error instanceof FetchError)) throw error;
     note({ outcome: error.category });
-    sendJson(res, 422, { error: error.category, message: error.message });
+    const { category, message, httpStatus } = error;
+    sendJson(res, 422, httpStatus === undefined ? { error: category, message } : { error: category, message, httpStatus });
   }
 }
 

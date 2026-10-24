@@ -75,7 +75,7 @@ async function readResponse(
   signal: AbortSignal,
   budget: ByteBudget | undefined,
 ): Promise<FetchedResource> {
-  if (response.status < 200 || response.status > 299) throw new FetchError("upstream_status");
+  if (response.status < 200 || response.status > 299) throw new FetchError("upstream_status", response.status);
   const contentType = mediaTypeOf(response.headers);
   if (!isAllowedType(contentType, kind)) throw new FetchError("unsupported_type");
 
@@ -122,7 +122,7 @@ export async function safeFetch(
         }
         if (redirects >= limits.maxRedirects) throw new FetchError("too_many_redirects");
         const location = single(response.headers.location);
-        if (location === undefined || location === "") throw new FetchError("upstream_status");
+        if (location === undefined || location === "") throw new FetchError("upstream_status", response.status);
         target = parseTargetUrl(location, target.url, limits.maxUrlLength);
       } finally {
         response.body.destroy(); // descarta o corpo do redirecionamento ou o que sobrou

@@ -68,9 +68,9 @@ function workerResult(worker: Worker): Promise<unknown> {
 }
 
 function startWorker(workerUrl: URL, htmlText: string, pageUrl: string, limits: Limits): Worker {
-  const { maxMediaRefs, maxUrlLength, maxHtmlNodes } = limits;
+  const { maxMediaRefs, maxUrlLength, maxHtmlNodes, maxSelectedMedia } = limits;
   return new Worker(workerUrl, {
-    workerData: { htmlText, pageUrl, limits: { maxMediaRefs, maxUrlLength, maxHtmlNodes } },
+    workerData: { htmlText, pageUrl, limits: { maxMediaRefs, maxUrlLength, maxHtmlNodes, maxSelectedMedia } },
     execArgv: [],
     env: {},
     resourceLimits: { maxOldGenerationSizeMb: limits.extractHeapMb, maxYoungGenerationSizeMb: YOUNG_GENERATION_MB },
