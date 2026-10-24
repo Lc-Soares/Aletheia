@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/main.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "try-exiftools": "node scripts/try-exiftools.ts",
     "test": "node ../test-support/run-tests.js \"src/**/*.test.ts\" \"scripts/**/*.test.ts\""
   },
   "dependencies": {

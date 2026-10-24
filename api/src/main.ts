@@ -1,6 +1,7 @@
 import { createGoogleVerifier } from "./auth.ts";
 import { DEFAULT_MAX_IN_FLIGHT_CHECKS } from "./check.ts";
 import { type Config, loadConfig } from "./config.ts";
+import { createExifToolsClient } from "./exiftools-client.ts";
 import { createFetcherClient } from "./fetcher-client.ts";
 import { RateLimiter } from "./rate-limit.ts";
 import { createApiServer, shutdown } from "./server.ts";
@@ -26,6 +27,8 @@ const server = createApiServer({
     // O token de serviço vem sempre do Google (metadados no Cloud Run, gcloud com impersonação
     // em desenvolvimento); não há modo que pule a autenticação do fetcher.
     callFetcher: createFetcherClient({ fetcherUrl: config.fetcherUrl, token: createServiceTokenSource(config.fetcherAudience) }),
+    // Endereço e limites de produção da ExifTools; a chave vai só no cabeçalho X-API-Key.
+    extract: createExifToolsClient({ apiKey: config.exifToolsApiKey }),
     limiter: new RateLimiter({ windowMs: RATE_LIMIT_WINDOW_MS }),
     maxInFlightChecks: DEFAULT_MAX_IN_FLIGHT_CHECKS,
   },

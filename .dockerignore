@@ -10,3 +10,6 @@ docs
 
 # Script de desenvolvimento (fetcher/scripts/try-fetch.ts): fora da imagem
 fetcher/scripts
+
+# Script de desenvolvimento (api/scripts/try-exiftools.ts): fora da imagem
+api/scripts
