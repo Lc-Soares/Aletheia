@@ -49,7 +49,7 @@ Resposta `200`, `application/x-ndjson`, com uma linha JSON por evento:
   - `group`: o grupo da mídia (variantes da mesma imagem), numerado pelo ranking (1 = melhor);
   - `score`: a pontuação do grupo, inteiro entre −1000 e 1000, para calibrar os pesos;
   - `selected`: se será baixada;
-  - `skipReason`: `null` quando selecionada; senão `variant` (outra variante do grupo foi a escolhida), `icon` (ícone ou elemento de interface), `unsupported_format` (SVG), `limit` (passou de `maxSelectedMedia`) ou `other` (reservado; aceito, mas não emitido hoje).
+  - `skipReason`: `null` quando selecionada; senão `variant` (outra variante do grupo foi a escolhida), `icon` (ícone ou elemento de interface), `unsupported_format` (SVG), `low_score` (pontuação negativa: sinais de elemento secundário da página), `limit` (passou de `maxSelectedMedia`) ou `other` (reservado; aceito, mas não emitido hoje).
 - Só as selecionadas são baixadas, no máximo `maxSelectedMedia` (8), em ordem de grupo. Ver "Seleção de mídias (heurística)".
 - `possiblyNeedsJavaScript` é um sinal heurístico, nunca certeza. Ver "Sinal de página montada por JavaScript".
 - `httpStatus` só aparece com `upstream_status`: o número do status HTTP que o site respondeu (100 a 599), nada do corpo nem dos cabeçalhos.
@@ -232,14 +232,23 @@ Decisão de produto: o sistema escolhe sozinho as imagens principais, para usuá
 | `width` ou `height` declarado até 64 | −60 | Só os dígitos iniciais do atributo (`24`, `24px`); porcentagem não conta. |
 | `width` e `height` declarados até 2 | −100 | Pixel de rastreamento (soma com o anterior). |
 
-- **Exclusão:** grupo com pontuação até −40 nunca é baixado (motivo `icon`), mesmo sobrando vaga. Só ancestral de layout (−30) rebaixa sem excluir. og:image com "logo" no nome (+100 − 40 = 60) continua elegível.
+- **Exclusão:** só grupos com pontuação maior ou igual a 0 podem ser selecionados, mesmo sobrando vaga. As regras, nesta ordem:
+  1. grupo só de SVG: `unsupported_format`;
+  2. pontuação até −40: `icon`;
+  3. qualquer outra pontuação negativa (−39 a −1): `low_score`. Por exemplo, imagem só em `<nav>`/`<aside>` (−30), ou logo dentro de `<article>` (+20 − 40 = −20);
+  4. sobrou vaga: selecionado;
+  5. senão: `limit`.
+
+  Pontuação 0 é a base de um `<img>` comum, sem nenhum sinal, e continua elegível. Sem isso, sites que não usam `<article>`, `<main>`, `<figure>` nem og:image ficariam sem nenhum download. og:image com "logo" no nome (+100 − 40 = 60) continua elegível. Origem da regra: num teste real (Olhar Digital), grupos com pontuação negativa, como um logo com −20, eram baixados porque sobrava vaga.
 - **Ordem:** pontuação decrescente, empate pela ordem de coleta. O número do grupo é a posição no ranking. Os `maxSelectedMedia` (8) primeiros grupos elegíveis são selecionados; os demais ficam como `limit`.
 - **Defesas:** cada atributo e o nome do arquivo são cortados em 1 KiB antes de procurar palavras, e `width`/`height` em 32 caracteres (até 6 dígitos). Os laços são lineares, sem regex com repetição aninhada. A varredura guarda os bits de ancestrais numa pilha paralela de números, sem objeto por item.
 
 **Limitações (revisar com páginas reais, usando o `score` impresso pelo `try-fetch`):**
 - Os pesos foram escolhidos à mão, sem calibração com páginas reais.
 - `aria-hidden` e `role="presentation"` podem excluir slides reais de carrossel: sites escondem dos leitores de tela os slides fora da vista.
-- Logos e marcas podem ser justamente o objeto da verificação (por exemplo, uma marca falsificada). A exclusão como `icon` é heurística e revisável; o item continua listado, com o motivo.
+- Logos e marcas podem ser justamente o objeto da verificação (por exemplo, uma marca falsificada). A exclusão como `icon` ou `low_score` é heurística e revisável; o item continua listado, com o motivo.
+- **Limitação conhecida (fora do escopo):** um logo dentro de `<article>` fica com −20 e aparece como `low_score`, não como `icon`, porque o motivo vem só da faixa de pontuação. Ele não é baixado do mesmo jeito; só o rótulo é menos preciso.
+- Uma imagem real de conteúdo que só aparece em `<aside>` ou `<nav>` (por exemplo, a foto de uma matéria relacionada) nunca é baixada.
 - Se a maior variante passar do limite de 15 MiB, o grupo vira `too_large`. **Melhoria futura (não implementada):** tentar a próxima variante.
 - Grupos, pontuação e seleção usam só as referências listadas (até 200). Variantes além da 200ª não entram, e um grupo pode ficar sem a maior variante.
 - Imagens de CSS (`background-image`), de `<noscript>` e as carregadas por JavaScript (lazy-load com `data-src`) não são vistas.

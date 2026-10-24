@@ -68,12 +68,12 @@ URL: https://noticias.example/materia
   URL final: https://noticias.example/materia
   título: Matéria de exemplo
   manchete: Manchete inventada
-  mídias: 24 listadas em 10 grupos, 4 selecionadas, 4 tentadas, 3 baixadas
+  mídias: 24 listadas em 10 grupos, 3 selecionadas, 3 tentadas, 3 baixadas
     grupo 1 · pontuação 100 · baixada  image/jpeg  1 bytes  sha256 2d711642b726  image  https://cdn.example/og/capa-1200.jpg
     grupo 2 · pontuação 20 · baixada  image/jpeg  1 bytes  sha256 a1fce4363854  image  https://noticias.example/fotos/principal-1600.jpg  (+7 variantes)
     grupo 3 · pontuação 20 · baixada  image/avif  1 bytes  sha256 594e519ae499  image  https://noticias.example/fotos/segunda-1600.avif  (+7 variantes)
     grupo 4 · pontuação 20 · ignorada: formato não analisável (SVG)  image  https://noticias.example/graficos/evolucao.svg
-    grupo 5 · pontuação -10 · erro: upstream_status (HTTP 404)  image  https://noticias.example/fotos/relacionada.jpg
+    grupo 5 · pontuação -10 · ignorada: pontuação negativa: sinais de elemento secundário da página  image  https://noticias.example/fotos/relacionada.jpg
     grupo 6 · pontuação -70 · ignorada: ícone ou elemento de interface  image  https://noticias.example/assets/marca.png
     ...
   tempos: página 0 ms · extração 0 ms · mídias 0 ms · total 0 ms
