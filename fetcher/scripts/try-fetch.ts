@@ -80,6 +80,7 @@ const SKIP_LABELS: Record<SkipReason, string> = {
   variant: "variante de outra mídia do grupo",
   icon: "ícone ou elemento de interface",
   unsupported_format: "formato não analisável (SVG)",
+  low_score: "pontuação negativa: sinais de elemento secundário da página",
   limit: "fora do limite de mídias selecionadas",
   other: "outro motivo",
 };

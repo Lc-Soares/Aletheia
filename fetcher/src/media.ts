@@ -13,7 +13,7 @@ export const MEDIA_SOURCES = [
   "twitter:image",
 ] as const;
 // Por que uma mídia listada não foi baixada. "other" é reservado: aceito, mas não emitido hoje.
-export const SKIP_REASONS = ["variant", "icon", "unsupported_format", "limit", "other"] as const;
+export const SKIP_REASONS = ["variant", "icon", "unsupported_format", "low_score", "limit", "other"] as const;
 
 export type MediaKind = (typeof MEDIA_KINDS)[number];
 export type MediaSource = (typeof MEDIA_SOURCES)[number];

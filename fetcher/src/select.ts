@@ -24,7 +24,8 @@ const WEIGHTS: readonly (readonly [number, number])[] = [
   [SIGNAL.PIXEL, -100],
 ];
 
-// Grupo com pontuação até aqui nunca é baixado (motivo "icon"), mesmo sobrando vaga.
+// Grupo com pontuação até aqui nunca é baixado (motivo "icon"), mesmo sobrando vaga. Qualquer
+// pontuação negativa também não é (motivo "low_score"); 0, a base de um <img> comum, é elegível.
 export const ICON_THRESHOLD = -40;
 const SMALL_PX = 64;
 const PIXEL_PX = 2;
@@ -134,6 +135,7 @@ function buildGroups(refs: ListedRef[], signalsOf: (root: number) => number): Gr
 function groupReason(group: Group, selectedSoFar: number, maxSelected: number): SkipReason | null {
   if (group.representative === null) return "unsupported_format";
   if (group.score <= ICON_THRESHOLD) return "icon";
+  if (group.score < 0) return "low_score";
   return selectedSoFar < maxSelected ? null : "limit";
 }
 

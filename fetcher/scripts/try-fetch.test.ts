@@ -61,7 +61,7 @@ describe("try-fetch: grupos, seleção, motivos e sinais", () => {
       "https://noticias.example/materia": html(newsArticleFixture()),
       "https://cdn.example/og/capa-1200.jpg": image(MEDIA_BYTES),
       "https://noticias.example/fotos/principal-1600.jpg": image("principal"),
-      "https://noticias.example/fotos/segunda-1600.avif": image("segunda", "image/avif"),
+      // segunda-1600.avif sem rota: a mídia selecionada recebe 404 (erro HTTP na saída).
     });
 
   test("cada mídia listada traz grupo, pontuação e situação (baixada, erro ou ignorada com motivo)", async () => {
@@ -73,7 +73,8 @@ describe("try-fetch: grupos, seleção, motivos e sinais", () => {
     assert.deepEqual([lead("capa-1200.jpg")?.status, lead("capa-1200.jpg")?.group, lead("capa-1200.jpg")?.score], ["downloaded", 1, 100]);
     assert.deepEqual([lead("evolucao.svg")?.status, lead("evolucao.svg")?.skipReason], ["ignored", "unsupported_format"]);
     assert.deepEqual([lead("marca.png")?.status, lead("marca.png")?.skipReason], ["ignored", "icon"]);
-    assert.deepEqual([lead("relacionada.jpg")?.status, lead("relacionada.jpg")?.error, lead("relacionada.jpg")?.httpStatus], ["error", "upstream_status", 404]);
+    assert.deepEqual([lead("relacionada.jpg")?.status, lead("relacionada.jpg")?.skipReason], ["ignored", "low_score"]);
+    assert.deepEqual([lead("segunda-1600.avif")?.status, lead("segunda-1600.avif")?.error, lead("segunda-1600.avif")?.httpStatus], ["error", "upstream_status", 404]);
     assert.equal(result.media.filter((m) => m.skipReason === "variant").length, 14);
   });
 
@@ -84,6 +85,7 @@ describe("try-fetch: grupos, seleção, motivos e sinais", () => {
       "(+7 variantes)",
       "ignorada: formato não analisável (SVG)",
       "ignorada: ícone ou elemento de interface",
+      "ignorada: pontuação negativa: sinais de elemento secundário da página",
       "erro: upstream_status (HTTP 404)",
     ]) {
       assert.ok(text.includes(expected), expected);
@@ -113,7 +115,7 @@ describe("try-fetch: grupos, seleção, motivos e sinais", () => {
 
   test("resumo conta as mídias ignoradas por motivo", async () => {
     const summary = summarize([await runOne("https://noticias.example/materia", article())]);
-    assert.deepEqual(summary.ignored, { unsupported_format: 1, icon: 5, variant: 14 });
+    assert.deepEqual(summary.ignored, { unsupported_format: 1, low_score: 1, icon: 5, variant: 14 });
     assert.deepEqual(summary.mediaErrors, { upstream_status: 1 });
     assert.match(formatSummary(summary), /mídias ignoradas: .*icon: 5/);
   });
