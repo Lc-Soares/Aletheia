@@ -256,7 +256,7 @@ Roteiro manual do formulário e do relatório (`web/public`). Os testes automati
 
 **COOP e o console (observação, não critério).** Antes do cabeçalho, o console mostrou duas vezes "Cross-Origin-Opener-Policy policy would block the window.postMessage call", vindo do script do Google Identity. O COOP `same-origin-allow-popups` segue o guia do Google; **não se sabe se ele muda essas mensagens**. No passo 10, registre aqui se mudaram ou não. Se persistirem, a anotação é "observado, origem provável: política do próprio Google, não verificada".
 
-**Resultado do teste manual do COOP:** ainda não registrado (a conferir no navegador, com o login real do Google).
+**Resultado do teste manual do COOP** (25/10/2026, feito na master já com o COOP mesclado): o login funcionou; o "Verificar sessão" mostrou "Sessão ativa"; o relatório de uma página de teste foi gerado. As duas mensagens "Cross-Origin-Opener-Policy policy would block the window.postMessage call" (origem client:395, do script do Google) CONTINUARAM no console, junto com o aviso de CSP do estilo inline (client:430). Origem provável: a política do próprio Google, não verificada. O cabeçalho foi conferido na resposta do dev-proxy pelo agente; a conferência na aba Rede do navegador não foi registrada.
 
 **Console do navegador.** Esperado, vindo do script do Google e não do Aletheia: o aviso `GSI_LOGGER` (ver "Renovação do ID token") e uma violação de CSP "Applying inline style" apontando para `accounts.google.com/gsi/client` (observada em 24/10/2026; a CSP não foi relaxada por causa dela). Qualquer outra violação de CSP, ou qualquer URL, token ou e-mail no console, é bug.
 
