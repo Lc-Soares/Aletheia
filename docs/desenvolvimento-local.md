@@ -236,3 +236,25 @@ A documentação do Google Identity Services diz que o ID token dura 1 hora, que
 2. Clique depois de mais de 1 hora: "Token renovado" ou "Sessão expirada, entre novamente". As duas respostas são válidas, conforme o Google permita ou não a renovação silenciosa (cooldown do One Tap, FedCM, cookies de terceiros bloqueados).
 
 O console do navegador mostra o início, o sucesso ou a falha da renovação (`console.info`), sem token nem e-mail. **Esse comportamento só se valida no navegador, com o Google real**: os testes automatizados usam uma renovação falsa.
+
+## Testar a interface
+
+Roteiro manual do formulário e do relatório (`web/public`). Os testes automatizados cobrem a lógica com um DOM falso; o que depende do navegador, do Google e da CSP real só se confere aqui. Suba tudo como em "API com o fetcher local" (fetcher, API e `npm run dev -w web`) e abra `http://localhost:5000`. Use só valores seus: nada de token, e-mail ou ID de projeto em issue, commit ou chat.
+
+| # | Passo | Resultado esperado |
+| --- | --- | --- |
+| 1 | **Login** com o Google | "Conectado como `<seu e-mail>`"; aparecem "Verificar sessão" e o painel "Verificar um link" |
+| 2 | **Link público** (por exemplo `https://example.com/`) e "Verificar" | Botão desabilitado e "Analisando... pode levar até 1 minuto" durante a análise. Depois, o foco vai para "Relatório de sinais"; no topo, o aviso fixo e os avisos da API; mídias agrupadas (uma linha por imagem, "+N variantes"); URL da mídia só como texto, sem miniatura |
+| 3 | **Link bloqueado**: `http://127.0.0.1/` | "Não foi possível acessar este endereço.", com o foco na mensagem e nenhum relatório. O texto é o mesmo de um domínio inexistente |
+| 4 | **Site que responde 403** (um endereço público que recuse robôs) | "O site respondeu com erro (HTTP 403)." |
+| 5 | **11ª checagem na mesma hora**: dez checagens válidas e mais uma | A 11ª mostra a mensagem do limite do plano ("... Tente novamente em N minutos."). Reiniciar a API zera o contador |
+| 6 | **Sessão expirada**: espere mais de 1 hora e clique em "Verificar" | Ou o relatório sai normalmente (token renovado), ou o formulário some, o botão de login volta e aparece "Sessão expirada, entre novamente". Entrar de novo limpa essa mensagem (e o texto do painel "Verificar sessão") |
+| 7 | **JSON baixado**: "Baixar JSON" depois de um relatório | Arquivo `aletheia-relatorio-AAAAMMDD-HHMMSS.json`, sem domínio no nome. Abra e confira: `schemaVersion` 1, data e hora, URL analisada, avisos, grupos de mídia. Nenhuma coordenada, endereço ou nome de autor |
+| 8 | **Celular**: modo de dispositivo do DevTools, 375 px | Sem rolagem horizontal; URLs e hashes longos quebram; margem lateral de 16 px |
+| 9 | **Teclado**: só Tab, Enter e Shift+Tab | Todo controle é alcançável, o foco é visível, e Enter no campo envia |
+
+**Console do navegador.** Esperado, vindo do script do Google e não do Aletheia: o aviso `GSI_LOGGER` (ver "Renovação do ID token") e uma violação de CSP "Applying inline style" apontando para `accounts.google.com/gsi/client` (observada em 24/10/2026; a CSP não foi relaxada por causa dela). Qualquer outra violação de CSP, ou qualquer URL, token ou e-mail no console, é bug.
+
+**Requisição lenta.** O navegador desiste em 65 s ("A análise demorou demais. Tente novamente."), o servidor corta em 50 s e o Hosting em 60 s. O `dev-proxy` não corta nem altera o prazo: uma resposta da API que demorou 70 s (mais que os 65 s do navegador) passou inteira, com status 200 e o mesmo corpo (verificado em 24/10/2026; o servidor Node do proxy não define `timeout`, e o `requestTimeout` de 300 s vale só para receber a requisição). Então, localmente, quem corta é o navegador, aos 65 s. Para ver a mensagem, faça a API demorar de propósito.
+
+**O que já foi verificado no navegador** (24/10/2026, Chrome, CSP do `firebase.json` aplicada pelo `dev-proxy`, sem o login do Google): o relatório renderiza sem violar a CSP; o download por Blob funciona e grava o JSON; uma imagem de terceiro é bloqueada pela CSP (controle positivo); em 375 px não há rolagem horizontal. O fluxo completo com login, 401 e renovação reais **não** foi exercitado.

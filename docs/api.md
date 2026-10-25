@@ -53,7 +53,7 @@ Ordem de processamento (`api/src/check.ts`):
 ```
 
 - `media` traz todas as referências que o fetcher listou (até 200), com `group`, `score`, `selected` e `skipReason` como o fetcher entrega (`docs/fetcher.md`). `download` é `null` para as não selecionadas.
-- São **uma referência por variante** (cada tamanho de um `srcset` é uma linha). A interface deve **agrupar por `group`** e mostrar uma linha por imagem.
+- São **uma referência por variante** (cada tamanho de um `srcset` é uma linha). A interface (`web/public/report-model.js`) agrupa por `group` e mostra uma linha por imagem.
 - Os bytes das mídias nunca vão na resposta.
 - `title`, `headline` e as URLs vêm de terceiros. Quem exibir esse texto precisa escapá-lo.
 - `metadata` é `null` para as mídias não selecionadas e para as que falharam no download. Para as baixadas, ver "Sinais por mídia".
@@ -157,6 +157,8 @@ Nada da resposta da ExifTools é repassado em bloco. Cada campo é escolhido, co
 - bem formado.
 
 HTML continua sendo texto: quem exibe escapa.
+
+**Limitação conhecida da limpeza** (aqui e em `web/public/sanitize.js`): remover `\p{Cf}` também tira o ZWJ (emojis compostos) e o ZWNJ (persa e alguns scripts indianos). Decisão aceita: segurança antes de fidelidade em texto de terceiros.
 
 | Sinal | Origem |
 | --- | --- |

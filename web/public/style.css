@@ -1,14 +1,93 @@
+:root {
+  --bg: #fafafa;
+  --text: #1a1a1a;
+  --muted: #55595e;
+  --link: #0b5cad;
+  --error: #8a1c1c;
+  --border: #c9ccd1;
+  --button-bg: #0b5cad;
+  --button-text: #ffffff;
+  --notice-bg: #fff4d6;
+  --notice-text: #3b2e00;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
 body {
   font-family: system-ui, sans-serif;
+  line-height: 1.5;
   margin: 0;
-  color: #1a1a1a;
-  background: #fafafa;
+  color: var(--text);
+  background: var(--bg);
+  overflow-wrap: break-word;
 }
 
 main {
   max-width: 40rem;
-  margin: 4rem auto;
+  margin: 2rem auto;
   padding: 0 1rem;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5 {
+  line-height: 1.25;
+}
+
+:focus-visible {
+  outline: 3px solid var(--link);
+  outline-offset: 2px;
+}
+
+a {
+  color: var(--link);
+}
+
+button {
+  font: inherit;
+  min-height: 2.75rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--button-bg);
+  border-radius: 0.375rem;
+  color: var(--button-text);
+  background: var(--button-bg);
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+input {
+  display: block;
+  width: 100%;
+  min-height: 2.75rem;
+  margin: 0.25rem 0 0.75rem;
+  padding: 0.5rem;
+  font-size: 1rem;
+  color: var(--text);
+  background: #ffffff;
+  border: 1px solid var(--muted);
+  border-radius: 0.375rem;
+}
+
+label {
+  display: block;
+  font-weight: 600;
+}
+
+.hint {
+  margin: 0;
+  color: var(--muted);
 }
 
 .session-check {
@@ -18,6 +97,78 @@ main {
   align-items: center;
 }
 
-.session-check[hidden] {
-  display: none;
+.check-panel {
+  margin-top: 2rem;
+}
+
+.check-error {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.report {
+  margin-top: 1.5rem;
+}
+
+.report-actions {
+  margin-top: 1.5rem;
+}
+
+.report-notices {
+  padding: 0.75rem 1rem;
+  color: var(--notice-text);
+  background: var(--notice-bg);
+  border-radius: 0.375rem;
+}
+
+.report-fixed-notice {
+  font-weight: 600;
+}
+
+.report-section {
+  margin-top: 1.5rem;
+}
+
+.report-media {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+}
+
+.report-facts dt {
+  margin-top: 0.5rem;
+  font-weight: 600;
+}
+
+.report-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.report-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.report-link {
+  overflow-wrap: anywhere;
+}
+
+.report-muted,
+.report-note,
+.report-empty {
+  color: var(--muted);
+}
+
+.report-ignored {
+  font-weight: 600;
+}
+
+.report-error {
+  color: var(--error);
+  font-weight: 600;
 }

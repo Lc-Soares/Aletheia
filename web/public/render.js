@@ -31,6 +31,9 @@ export function createSessionCheckUi({ panel, button, status, expiry }) {
     showResult(kind) {
       status.textContent = CHECK_TEXT[kind];
     },
+    clearResult() {
+      status.textContent = "";
+    },
     showExpiry(date) {
       expiry.textContent = date === null ? "" : `Token expira às ${formatExpiry(date)}`;
     },
@@ -53,6 +56,11 @@ export function createUi({ status, signin }) {
     },
     showError() {
       status.textContent = "Não foi possível concluir a verificação. Tente novamente.";
+    },
+    // Sessão expirada durante uma checagem: volta ao login, sem repetir o texto de expiração.
+    showLogin() {
+      status.textContent = "";
+      signin.hidden = false;
     },
   };
 }

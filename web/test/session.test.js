@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { createSessionCheckUi } from "../public/render.js";
-import { createSession } from "../public/session.js";
+import { createSession, UNAUTHORIZED } from "../public/session.js";
 
 /** @typedef {{ ok: boolean, status: number, json(): Promise<unknown> }} FakeResponse */
 
@@ -315,5 +315,193 @@ describe("verificar sessão", () => {
       }
     }
     assert.deepEqual(touched, []);
+  });
+});
+
+describe("status do painel depois de um novo login", () => {
+  test("login com token novo limpa 'Sessão expirada, entre novamente'", async () => {
+    const { session, elements } = setupCheck({ responses: [status(401)], renewToken: async () => null });
+    session.setToken(TOKEN_1);
+    await session.verify();
+    assert.equal(elements.status.textContent, "Sessão expirada, entre novamente");
+    session.setToken(TOKEN_2);
+    assert.equal(elements.status.textContent, "");
+  });
+
+  test("login com token novo limpa também 'Sessão ativa', 'Token renovado' e o erro", async () => {
+    /** @type {Array<[FakeResponse[], string | null, string]>} */
+    const cases = [
+      [[ok({ email: EMAIL })], null, "Sessão ativa"],
+      [[status(401), ok({ email: EMAIL })], TOKEN_2, "Token renovado"],
+      [[status(500)], null, "Não foi possível verificar a sessão"],
+    ];
+    for (const [responses, renewed, text] of cases) {
+      const { session, elements } = setupCheck({ responses, renewToken: async () => renewed });
+      session.setToken(TOKEN_1);
+      await session.verify();
+      assert.equal(elements.status.textContent, text);
+      session.setToken(jwt("3"));
+      assert.equal(elements.status.textContent, "");
+    }
+  });
+
+  test("setToken(null) não apaga o resultado mostrado", async () => {
+    const { session, elements } = setupCheck({ responses: [status(401)], renewToken: async () => null });
+    session.setToken(TOKEN_1);
+    await session.verify();
+    session.setToken(null);
+    assert.equal(elements.status.textContent, "Sessão expirada, entre novamente");
+  });
+
+  test("a renovação feita dentro de uma chamada não limpa o resultado do painel", async () => {
+    const { session, elements } = setupCheck({
+      responses: [ok({ email: EMAIL }), status(401), ok({ email: EMAIL })],
+      renewToken: async () => TOKEN_2,
+    });
+    session.setToken(TOKEN_1);
+    await session.verify();
+    assert.equal(elements.status.textContent, "Sessão ativa");
+    // Renovação por 401 em loadMe (sem passar pelo botão): o texto anterior continua até o próximo resultado.
+    await session.loadMe();
+    assert.equal(elements.status.textContent, "Sessão ativa");
+  });
+});
+
+describe("withToken (chamada autenticada com uma renovação)", () => {
+  /** @param {{ renewToken?: () => Promise<string | null> }} [options] */
+  const make = ({ renewToken = async () => null } = {}) => {
+    let renewals = 0;
+    const session = createSession({
+      fetchFn: async () => {
+        throw new Error("não usado");
+      },
+      renewToken: () => {
+        renewals++;
+        return renewToken();
+      },
+      ui: { showEmail() {}, showExpired() {}, showError() {} },
+      log: () => {},
+    });
+    return { session, renewals: () => renewals };
+  };
+
+  test("sem token: expirada, sem chamar nada", async () => {
+    const { session, renewals } = make();
+    let calls = 0;
+    const outcome = await session.withToken(async () => {
+      calls++;
+      return "x";
+    });
+    assert.deepEqual(outcome, { ok: false });
+    assert.equal(calls, 0);
+    assert.equal(renewals(), 0);
+  });
+
+  test("sucesso direto: passa o token e devolve o valor, sem renovar", async () => {
+    const { session, renewals } = make();
+    session.setToken(TOKEN_1);
+    /** @type {string[]} */
+    const seen = [];
+    const outcome = await session.withToken(async (token) => {
+      seen.push(token);
+      return "valor";
+    });
+    assert.deepEqual(outcome, { ok: true, value: "valor", renewed: false });
+    assert.deepEqual(seen, [TOKEN_1]);
+    assert.equal(renewals(), 0);
+  });
+
+  test("UNAUTHORIZED e renovação ok: repete UMA vez com o token novo", async () => {
+    const { session, renewals } = make({ renewToken: async () => TOKEN_2 });
+    session.setToken(TOKEN_1);
+    /** @type {string[]} */
+    const seen = [];
+    const outcome = await session.withToken(async (token) => {
+      seen.push(token);
+      return token === TOKEN_1 ? UNAUTHORIZED : "valor";
+    });
+    assert.deepEqual(outcome, { ok: true, value: "valor", renewed: true });
+    assert.deepEqual(seen, [TOKEN_1, TOKEN_2]);
+    assert.equal(renewals(), 1);
+  });
+
+  test("UNAUTHORIZED e renovação que falha: expirada, sem segunda tentativa", async () => {
+    const { session } = make({ renewToken: async () => null });
+    session.setToken(TOKEN_1);
+    let calls = 0;
+    const outcome = await session.withToken(async () => {
+      calls++;
+      return UNAUTHORIZED;
+    });
+    assert.deepEqual(outcome, { ok: false });
+    assert.equal(calls, 1);
+  });
+
+  test("UNAUTHORIZED de novo depois de renovar: expirada, sem segunda renovação", async () => {
+    const { session, renewals } = make({ renewToken: async () => TOKEN_2 });
+    session.setToken(TOKEN_1);
+    let calls = 0;
+    const outcome = await session.withToken(async () => {
+      calls++;
+      return UNAUTHORIZED;
+    });
+    assert.deepEqual(outcome, { ok: false });
+    assert.equal(calls, 2);
+    assert.equal(renewals(), 1);
+  });
+
+  test("exceção da tentativa (rede) passa adiante, sem renovar", async () => {
+    const { session, renewals } = make({ renewToken: async () => TOKEN_2 });
+    session.setToken(TOKEN_1);
+    await assert.rejects(
+      session.withToken(async () => {
+        throw new Error("rede");
+      }),
+      /rede/,
+    );
+    assert.equal(renewals(), 0);
+  });
+
+  test("duas renovações simultâneas compartilham um só renewToken", async () => {
+    /** @type {(token: string | null) => void} */
+    let finish = () => {};
+    const { session, renewals } = make({ renewToken: () => new Promise((resolve) => (finish = resolve)) });
+    session.setToken(TOKEN_1);
+    /** @param {string} token */
+    const attempt = async (token) => (token === TOKEN_1 ? UNAUTHORIZED : "valor");
+    const first = session.withToken(attempt);
+    const second = session.withToken(attempt);
+    await flush();
+    finish(TOKEN_2);
+    assert.deepEqual(await first, { ok: true, value: "valor", renewed: true });
+    assert.deepEqual(await second, { ok: true, value: "valor", renewed: true });
+    assert.equal(renewals(), 1);
+  });
+
+  test("uma renovação por vez: depois que termina, a próxima inicia outra", async () => {
+    const { session, renewals } = make({ renewToken: async () => TOKEN_2 });
+    for (let i = 0; i < 2; i++) {
+      session.setToken(TOKEN_1);
+      await session.withToken(async (token) => (token === TOKEN_1 ? UNAUTHORIZED : "valor"));
+    }
+    assert.equal(renewals(), 2);
+  });
+
+  test("a renovação não limpa o painel 'Verificar sessão'", async () => {
+    const elements = { panel: fakeElement(), button: fakeElement(), status: fakeElement(), expiry: fakeElement() };
+    const checkUi = createSessionCheckUi(elements);
+    const session = createSession({
+      fetchFn: async () => {
+        throw new Error("não usado");
+      },
+      renewToken: async () => TOKEN_2,
+      ui: { showEmail() {}, showExpired() {}, showError() {} },
+      checkUi,
+      log: () => {},
+    });
+    session.setToken(TOKEN_1);
+    checkUi.showResult("active");
+    await session.withToken(async (token) => (token === TOKEN_1 ? UNAUTHORIZED : "valor"));
+    assert.equal(elements.status.textContent, "Sessão ativa");
   });
 });

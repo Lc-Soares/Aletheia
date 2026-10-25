@@ -17,6 +17,30 @@
         <span id="session-status" role="status"></span>
         <span id="session-expiry"></span>
       </div>
+      <section id="check-panel" class="check-panel" aria-labelledby="check-heading" hidden>
+        <h2 id="check-heading">Verificar um link</h2>
+        <form id="check-form" method="post" novalidate>
+          <label for="check-url">Link da página</label>
+          <p id="check-hint" class="hint">Cole o endereço completo, começando com http:// ou https://.</p>
+          <input
+            id="check-url"
+            name="url"
+            type="text"
+            inputmode="url"
+            autocomplete="off"
+            autocapitalize="none"
+            spellcheck="false"
+            aria-describedby="check-hint check-error"
+          />
+          <button id="check-submit" type="submit">Verificar</button>
+        </form>
+        <p id="check-progress" role="status" aria-live="polite"></p>
+        <p id="check-error" class="check-error" tabindex="-1" hidden></p>
+        <div id="report"></div>
+        <div class="report-actions">
+          <button id="download-json" type="button" hidden>Baixar JSON</button>
+        </div>
+      </section>
     </main>
     <script type="module" src="/app.js"></script>
     <script src="https://accounts.google.com/gsi/client" async></script>
