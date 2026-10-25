@@ -252,6 +252,11 @@ Roteiro manual do formulário e do relatório (`web/public`). Os testes automati
 | 7 | **JSON baixado**: "Baixar JSON" depois de um relatório | Arquivo `aletheia-relatorio-AAAAMMDD-HHMMSS.json`, sem domínio no nome. Abra e confira: `schemaVersion` 1, data e hora, URL analisada, avisos, grupos de mídia. Nenhuma coordenada, endereço ou nome de autor |
 | 8 | **Celular**: modo de dispositivo do DevTools, 375 px | Sem rolagem horizontal; URLs e hashes longos quebram; margem lateral de 16 px |
 | 9 | **Teclado**: só Tab, Enter e Shift+Tab | Todo controle é alcançável, o foco é visível, e Enter no campo envia |
+| 10 | **COOP**: recarregue `http://localhost:5000` pelo `dev-proxy`, abra DevTools > Rede e clique no documento | **Critério:** a resposta traz `Cross-Origin-Opener-Policy: same-origin-allow-popups`; o login funciona; "Verificar sessão" funciona. As mensagens do console (abaixo) são só observação |
+
+**COOP e o console (observação, não critério).** Antes do cabeçalho, o console mostrou duas vezes "Cross-Origin-Opener-Policy policy would block the window.postMessage call", vindo do script do Google Identity. O COOP `same-origin-allow-popups` segue o guia do Google; **não se sabe se ele muda essas mensagens**. No passo 10, registre aqui se mudaram ou não. Se persistirem, a anotação é "observado, origem provável: política do próprio Google, não verificada".
+
+**Resultado do teste manual do COOP:** ainda não registrado (a conferir no navegador, com o login real do Google).
 
 **Console do navegador.** Esperado, vindo do script do Google e não do Aletheia: o aviso `GSI_LOGGER` (ver "Renovação do ID token") e uma violação de CSP "Applying inline style" apontando para `accounts.google.com/gsi/client` (observada em 24/10/2026; a CSP não foi relaxada por causa dela). Qualquer outra violação de CSP, ou qualquer URL, token ou e-mail no console, é bug.
 
