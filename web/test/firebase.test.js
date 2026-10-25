@@ -61,6 +61,19 @@ describe("firebase.json", () => {
     assert.deepEqual(policy.get("img-src"), ["'self'"]);
   });
 
+  test("COOP é exatamente same-origin-allow-popups na regra que cobre as páginas (fluxo com janela do Google Identity)", () => {
+    const rule = hosting.headers.find((/** @type {{ source: string }} */ h) => h.source === "**");
+    const coop = rule.headers.filter((/** @type {{ key: string }} */ h) => h.key.toLowerCase() === "cross-origin-opener-policy");
+    assert.deepEqual(coop, [{ key: "Cross-Origin-Opener-Policy", value: "same-origin-allow-popups" }]);
+  });
+
+  test("a CSP continua exatamente como está (trava contra mudança acidental)", () => {
+    assert.equal(
+      globalHeaders().get("content-security-policy"),
+      "default-src 'none'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' https://accounts.google.com/gsi/style; frame-src https://accounts.google.com/gsi/; connect-src 'self' https://accounts.google.com/gsi/; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    );
+  });
+
   test("CSP não afrouxa com unsafe-inline, unsafe-eval, data:, curinga ou http:", () => {
     const raw = String(globalHeaders().get("content-security-policy"));
     assert.doesNotMatch(raw, /unsafe-inline|unsafe-eval|unsafe-hashes|data:|http:(?!\/\/localhost)|\*/);

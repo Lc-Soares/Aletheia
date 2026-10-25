@@ -5,7 +5,6 @@ Lista única do que falta, atualizada em **24/10/2026**, ao fim da Fase 4. Cada 
 ## Interface (`web/`)
 
 - **Renovação do token:** migrar o callback do `prompt()` para não depender dos métodos de status do One Tap, que estão marcados como obsoletos com o FedCM (aviso `GSI_LOGGER` no console). Ver `docs/desenvolvimento-local.md`, "Renovação do ID token".
-- **COOP:** endurecer o `Cross-Origin-Opener-Policy` (`same-origin-allow-popups`) antes do deploy.
 - **Nomes de autor ou de local:** se um dia passarem a ser exibidos, oferecer a opção de ocultar antes de mostrar (hoje a interface mostra só "contém localização" e "contém autoria declarada", sem valores).
 
 ## Próximas fases
