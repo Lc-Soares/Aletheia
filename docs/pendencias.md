@@ -34,7 +34,7 @@ Lista única do que falta, atualizada em **24/10/2026**, ao fim da Fase 4. Cada 
 
 ## Deploy
 
-- **Guia passo a passo de implantação** em `docs/deploy.md`: Etapas 0 e 1 prontas; Etapas 2 a 5 por escrever. Será escrito à parte, a partir da documentação oficial atual, usando o checklist abaixo e as regras de implantação de `docs/fetcher.md` e `docs/api.md`.
+- **Guia passo a passo de implantação** em `docs/deploy.md`, com as Etapas 0 e 1 executadas e a Etapa 2 escrita. Etapas 3 a 5 por escrever. O guia segue a documentação oficial atual, o checklist abaixo e as regras de implantação de `docs/fetcher.md` e `docs/api.md`.
 - **Automação do deploy por GitHub Actions.** Hoje o CI só roda `npm run check`, a auditoria de dependências e o build das imagens, sem push nem deploy.
 - **Orçamento com alerta** no projeto `<ID_DO_PROJETO>` (`docs/arquitetura.md`, abuso e custo).
 
@@ -52,3 +52,4 @@ Lista única do que falta, atualizada em **24/10/2026**, ao fim da Fase 4. Cada 
 - [ ] Vídeo/QuickTime na ExifTools.
 - [ ] Placeholders da política de privacidade preenchidos e revisão jurídica.
 - [ ] Primeira chamada de uma instância nova: medir o atraso do token de serviço (`docs/api.md`, "Chamada ao fetcher").
+- [ ] Fixar por digest as imagens base node:24-slim dos Dockerfiles e a imagem gcr.io/cloud-builders/docker do Cloud Build, antes do lançamento.
