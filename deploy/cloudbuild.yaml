@@ -1,0 +1,10 @@
+# Build das imagens do Aletheia no Cloud Build.
+# Uso, a partir da raiz do repositório:
+#   gcloud builds submit --config=deploy/cloudbuild.yaml --substitutions=_SERVICE=<api|fetcher>,_IMAGE=<imagem:tag> .
+# O contexto é a raiz do repositório e o Dockerfile fica em <serviço>/Dockerfile,
+# igual ao que o CI faz (.github/workflows/ci.yml). Guia: docs/deploy.md, Etapa 2.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "${_SERVICE}/Dockerfile", "-t", "${_IMAGE}", "."]
+images:
+  - "${_IMAGE}"
