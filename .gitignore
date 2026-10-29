@@ -7,6 +7,10 @@ coverage/
 .env.*
 !.env.example
 secrets/
+secrets.sh
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
 # Estado local do Claude Code (não versionar)
 .claude/state/
 .claude/settings.local.json
