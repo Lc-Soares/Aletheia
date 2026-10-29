@@ -57,7 +57,7 @@ Lista única do que falta, atualizada em **28/10/2026**, após o primeiro deploy
 - [x] Faturamento ativo no projeto `<ID_DO_PROJETO>`. (Ativo; Etapa 0.)
 - [x] Fetcher com `--concurrency 2`, 1 GiB e conta de serviço própria **sem papéis**. `roles/run.invoker` só para a `<conta de serviço da API>`. (Etapa 3, passos 3.1 a 3.5, 27/10/2026; o 403 sem token foi conferido.)
 - [x] API com `--max-instances 2`, `--concurrency 4` e `--timeout 60` (`docs/api.md`, "Capacidade e implantação"). (Etapa 3, passo 3.6, 27/10/2026.)
-- [x] `EXIFTOOLS_API_KEY` no Secret Manager. (Etapas 1.3 e 3.6; o tamanho do segredo precisa ser conferido, ver 1.3.)
+- [x] `EXIFTOOLS_API_KEY` no Secret Manager. (Etapas 1.3 e 3.6; o segredo foi corrigido e verificado em 27/10/2026, com a ExifTools respondendo ok para as 8 mídias de uma página real; ver 1.3)
 - [x] Origens OAuth de produção (`docs/desenvolvimento-local.md`, "Origens a autorizar"). (Etapa 5, 28/10/2026.)
 - [ ] Vídeo/QuickTime na ExifTools.
 - [ ] Placeholders da política de privacidade preenchidos e revisão jurídica.

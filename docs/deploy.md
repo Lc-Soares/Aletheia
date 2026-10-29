@@ -26,7 +26,7 @@ Rode `echo $PROJECT_ID` e confira que mostra o ID real do projeto.
 - **Primeiro deploy manual**, sem automação. Depois, GitHub Actions.
 - **Crédito de teste do Google Cloud** (US$ 300) com faturamento ativo. O alerta de orçamento só avisa; quem limita o custo é o `--max-instances`.
 - **Região:** `southamerica-east1` para o Cloud Run e o Artifact Registry. O rewrite do Firebase Hosting para essa região **funcionou** no primeiro deploy (Etapa 4), sem o erro de região; o plano B (`us-central1`) não foi necessário.
-- **Nome do site de Hosting:** padrão `<ID_DO_PROJETO>.web.app`. Um site adicional com nome mais limpo é opcional e se decide na Etapa 4.
+- **Nome do site de Hosting:** padrão `<ID_DO_PROJETO>.web.app`. Decidido: manter o site padrão; um site adicional com nome mais limpo fica opcional para depois.
 - **CLI do Firebase:** usada com `npx firebase-tools@15.34.0` a partir da raiz do repositório, para valer o `.npmrc` (versão com pelo menos 7 dias de publicação; a 15.34.1 tinha 6 dias em 27/10/2026). Sem `npm install -g`. Reavaliar a versão na próxima vez que a CLI for usada. Não aceitar o recurso opcional "Gemini in Firebase" no login (decisão de privacidade; o deploy não depende dele).
 
 ## Etapa 0: Firebase no projeto existente
@@ -116,8 +116,6 @@ Conferir:
 ```
 gcloud artifacts repositories list --location=southamerica-east1
 ```
-
-Se o Firebase Hosting recusar a região (ver "Decisões"), criar outro repositório em `us-central1` e refazer o build apontando `_IMAGE` para ele.
 
 **2.2. Preparar a pasta.** A partir da raiz do repositório, na `master` atualizada e sem alterações pendentes:
 
