@@ -32,6 +32,7 @@ Leia antes de mudanças de arquitetura ou de privacidade:
 3. Rode `npm run check`. Só diga que terminou se passou, e mostre o resultado real. Nunca afirme que testes passaram sem rodar. Se não conseguir rodar, diga isso.
 4. Se um teste falhar, corrija a causa. Nunca apague, pule (`skip`, `only`), enfraqueça asserts nem desligue regras de lint ou de tipos para passar.
 5. Trabalhe em branch própria, com commits pequenos e focados. Nunca commite direto na `master` e nunca use `git push --force`.
+6. Ao terminar, faça o push da branch (sem `--force`) e PARE: não abra PR nem faça merge. O PR é aberto pelo desenvolvedor, depois da verificação no Codespace.
 
 ## Segurança (não negociável)
 - **Segredos:** nunca em código, logs, testes ou commits. Vêm de variáveis de ambiente ou do Secret Manager. Não leia arquivos `.env*`.
