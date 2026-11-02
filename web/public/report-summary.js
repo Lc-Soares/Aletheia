@@ -43,9 +43,7 @@ export function summarizeSignals(report) {
     );
   }
   if (withoutOrigin > 0) {
-    lines.push(
-      `${plural(withoutOrigin, "mídia não tem", "mídias não têm")} assinatura C2PA, câmera nem datas. Isso é comum em imagens reenviadas por redes sociais e não indica adulteração por si só.`,
-    );
+    lines.push(`${plural(withoutOrigin, "mídia não tem", "mídias não têm")} assinatura C2PA, câmera nem datas.`);
   }
   if (lines.length === 0) lines.push("As mídias analisadas não têm os sinais resumidos aqui. Veja os detalhes de cada mídia abaixo.");
   return lines;
