@@ -12,23 +12,50 @@ export const MAX_LINK_LENGTH = 2048;
 export const FORM_TEXT = {
   empty: "Cole o link da página que você quer verificar.",
   scheme: "O link precisa começar com http:// ou https://.",
+  credentials: "O link não pode conter usuário e senha.",
   tooLong: `O link é longo demais (máximo de ${MAX_LINK_LENGTH} caracteres).`,
   progress: "Analisando... pode levar até 1 minuto",
   expired: "Sessão expirada, entre novamente",
   unexpected: "Resposta inesperada do servidor.",
 };
 
+const TRACKING_PARAM = /^(utm_|fbclid$|gclid$|igshid$|mc_eid$)/iu;
+
 /**
  * Checagem só de usabilidade. O servidor valida a URL de verdade (esquema, destino, tamanho).
+ * Remove parâmetros de rastreio e o fragmento (#) antes de enviar; sem nada a remover, o link segue como foi colado.
  * @param {unknown} raw
  * @returns {{ ok: true, url: string } | { ok: false, message: string }}
  */
 export function validateLink(raw) {
-  const url = typeof raw === "string" ? raw.trim() : "";
-  if (url === "") return { ok: false, message: FORM_TEXT.empty };
-  if (url.length > MAX_LINK_LENGTH) return { ok: false, message: FORM_TEXT.tooLong };
-  if (!/^https?:\/\//iu.test(url)) return { ok: false, message: FORM_TEXT.scheme };
-  return { ok: true, url };
+  const text = typeof raw === "string" ? raw.trim() : "";
+  if (text === "") return { ok: false, message: FORM_TEXT.empty };
+  if (text.length > MAX_LINK_LENGTH) return { ok: false, message: FORM_TEXT.tooLong };
+  if (!/^https?:\/\//iu.test(text)) return { ok: false, message: FORM_TEXT.scheme };
+
+  let parsed;
+  try {
+    parsed = new URL(text);
+  } catch {
+    // Só usabilidade: o servidor valida de verdade, então um link que o navegador não entende segue como está.
+    return { ok: true, url: text };
+  }
+  if (parsed.username !== "" || parsed.password !== "") {
+    return { ok: false, message: FORM_TEXT.credentials };
+  }
+
+  let changed = false;
+  for (const key of [...parsed.searchParams.keys()]) {
+    if (TRACKING_PARAM.test(key)) {
+      parsed.searchParams.delete(key);
+      changed = true;
+    }
+  }
+  if (parsed.hash !== "") {
+    parsed.hash = "";
+    changed = true;
+  }
+  return { ok: true, url: changed ? parsed.toString() : text };
 }
 
 /**

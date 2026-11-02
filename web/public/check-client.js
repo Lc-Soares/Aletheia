@@ -37,7 +37,8 @@ export const MESSAGES = {
  */
 
 /**
- * @typedef {{ status: "ok", body: unknown } | { status: "expired" } | { status: "error", message: string }} CheckResult
+ * `retryable: true` só quando vale tentar de novo logo em seguida (hoje: 503, serviço ocupado).
+ * @typedef {{ status: "ok", body: unknown } | { status: "expired" } | { status: "error", message: string, retryable?: boolean }} CheckResult
  */
 
 /** @param {unknown} body @returns {string | null} */
@@ -68,6 +69,7 @@ async function errorMessage(response, readBody) {
       return serverMessage(await readBody()) ?? MESSAGES.generic;
     case 429:
       return serverMessage(await readBody()) ?? rateLimitedText(response.headers.get("Retry-After"));
+    case 500:
     case 502:
       return MESSAGES.internal;
     case 503:
@@ -116,6 +118,7 @@ export async function postCheck(url, { session, fetchFn, timeoutMs = CHECK_TIMEO
       }
       const message = await errorMessage(response, readBody);
       return timedOut ? timeoutResult() : /** @type {CheckResult} */ ({ status: "error", message });
+      
     } catch {
       // O erro original (rede, abort) é descartado: pode trazer a URL ou detalhes internos.
       return /** @type {CheckResult} */ ({ status: "error", message: timedOut ? MESSAGES.timeout : MESSAGES.network });
