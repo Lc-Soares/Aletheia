@@ -36,6 +36,28 @@ function deferred() {
 }
 
 /**
+ * Aviso de rastreio: só aceita textContent e hidden. Qualquer outro acesso (innerHTML, append...) lança.
+ * @returns {{ textContent: string, hidden: boolean }}
+ */
+function strictNotice() {
+  const state = { textContent: "", hidden: true };
+  return /** @type {{ textContent: string, hidden: boolean }} */ (
+    new Proxy(state, {
+      get(target, prop) {
+        if (prop === "textContent" || prop === "hidden") return target[prop];
+        throw new Error(`acesso não permitido ao aviso: ${String(prop)}`);
+      },
+      set(target, prop, value) {
+        if (prop === "textContent") target.textContent = String(value);
+        else if (prop === "hidden") target.hidden = Boolean(value);
+        else throw new Error(`escrita não permitida no aviso: ${String(prop)}`);
+        return true;
+      },
+    })
+  );
+}
+
+/**
  * @param {{ fetchFn?: (url: string, init: { headers: Record<string, string>, body: string, signal: AbortSignal }) => Promise<ReturnType<typeof response>>, renewToken?: () => Promise<string | null>, token?: string | null, session?: unknown }} [options]
  */
 function setup({ fetchFn, renewToken = async () => null, token = TOKEN_1, session: custom } = {}) {
@@ -48,6 +70,7 @@ function setup({ fetchFn, renewToken = async () => null, token = TOKEN_1, sessio
     input,
     button: { disabled: false },
     progress: { textContent: "" },
+    notice: strictNotice(),
     error,
     report: createFakeElement("div"),
     download: { hidden: true },
@@ -127,6 +150,135 @@ describe("validateLink", () => {
     assert.equal(FORM_TEXT.progress, "Analisando... pode levar até 1 minuto");
     assert.equal(FORM_TEXT.expired, "Sessão expirada, entre novamente");
     assert.equal(FORM_TEXT.unexpected, "Resposta inesperada do servidor.");
+    assert.equal(FORM_TEXT.trackingRemoved, "Removemos parâmetros de rastreio do link antes de enviar.");
+    assert.equal(FORM_TEXT.credentials, "O link não pode conter usuário e senha.");
+  });
+});
+
+describe("validateLink: normalização do link", () => {
+  const removed = (/** @type {string} */ url) => ({ ok: true, url, notice: FORM_TEXT.trackingRemoved });
+
+  test("link sem nada a remover volta idêntico, sem aviso", () => {
+    for (const raw of [
+      "https://exemplo.com/a?q=1&x=2",
+      "https://Exemplo.COM/Caminho%2Fx?b=%C3%A9&c=a+b",
+      "https://exemplo.com/?a=1&&b=2",
+      "https://exemplo.com/?",
+      "https://exemplo.com/?utm=1&fbclid2=x&my_gclid=y",
+    ]) {
+      assert.deepEqual(validateLink(raw), { ok: true, url: raw }, raw);
+    }
+  });
+
+  test("remove cada parâmetro de rastreio, sem diferenciar maiúsculas, e dá o aviso", () => {
+    for (const name of ["utm_source", "utm_medium", "utm_campaign", "UTM_Term", "utm_", "fbclid", "FBCLID", "gclid", "igshid", "mc_eid", "MC_EID"]) {
+      assert.deepEqual(validateLink(`${LINK}?${name}=abc`), removed(LINK), name);
+    }
+  });
+
+  test("mistura de rastreio e parâmetros normais: os normais ficam exatamente como estavam", () => {
+    assert.deepEqual(validateLink(`${LINK}?q=a%20b&utm_source=x`), removed(`${LINK}?q=a%20b`));
+    assert.deepEqual(validateLink(`${LINK}?a=1+2&fbclid=z`), removed(`${LINK}?a=1+2`));
+    assert.deepEqual(validateLink(`${LINK}?utm_source=x&q=a%20b&gclid=y&b=%C3%A9`), removed(`${LINK}?q=a%20b&b=%C3%A9`));
+    assert.deepEqual(validateLink(`${LINK}?gclid&a=1`), removed(`${LINK}?a=1`));
+  });
+
+  test("só rastreio: a URL fica sem '?' sobrando", () => {
+    assert.deepEqual(validateLink(`${LINK}?utm_source=x&utm_medium=y`), removed(LINK));
+  });
+
+  test("valor que contém nome de rastreio não é removido (só o nome do parâmetro conta)", () => {
+    for (const raw of [`${LINK}?ref=utm_source`, `${LINK}?next=https://x.com/?utm_source=a`]) {
+      assert.deepEqual(validateLink(raw), { ok: true, url: raw }, raw);
+    }
+  });
+
+  test("só o fragmento (#): remove sem aviso", () => {
+    assert.deepEqual(validateLink(`${LINK}#secao`), { ok: true, url: LINK });
+    assert.deepEqual(validateLink(`${LINK}?a=1#x?utm_source=y`), { ok: true, url: `${LINK}?a=1` });
+  });
+
+  test("rastreio e fragmento juntos: remove os dois, com aviso", () => {
+    assert.deepEqual(validateLink(`${LINK}?utm_source=x#secao`), removed(LINK));
+  });
+
+  test("usuário e senha recusados", () => {
+    for (const raw of ["https://usuario:senha@exemplo.com/", "https://usuario@exemplo.com/?utm_source=x"]) {
+      assert.deepEqual(validateLink(raw), { ok: false, message: FORM_TEXT.credentials }, raw);
+    }
+  });
+
+  test("texto que o new URL não entende segue como está (o servidor valida de verdade)", () => {
+    for (const raw of ["https://exem plo.com/?utm_source=x", "http://[::1/?fbclid=1"]) {
+      assert.deepEqual(validateLink(raw), { ok: true, url: raw }, raw);
+    }
+  });
+});
+
+describe("fluxo: aviso de rastreio removido", () => {
+  const TRACKED = `${LINK}?utm_source=x`;
+
+  test("aparece durante e depois da análise, como texto, e o link enviado vem limpo", async () => {
+    const pending = deferred();
+    const { flow, elements, calls } = setup({ fetchFn: () => pending.promise });
+    elements.input.value = TRACKED;
+    const running = flow.submit();
+    await flush();
+    assert.equal(calls[0]?.body, JSON.stringify({ url: LINK }));
+    assert.equal(elements.notice.textContent, FORM_TEXT.trackingRemoved);
+    assert.equal(elements.notice.hidden, false);
+    pending.resolve(response(200, apiExample()));
+    await running;
+    assert.equal(elements.notice.textContent, FORM_TEXT.trackingRemoved);
+    assert.equal(elements.notice.hidden, false);
+  });
+
+  test("continua depois de um erro da API", async () => {
+    const { flow, elements } = setup({ fetchFn: async () => response(503, {}) });
+    elements.input.value = TRACKED;
+    await flow.submit();
+    assert.equal(elements.error.textContent, MESSAGES.busy);
+    assert.equal(elements.notice.hidden, false);
+  });
+
+  test("some quando uma nova verificação começa sem remoção", async () => {
+    const pending = deferred();
+    let calls = 0;
+    const { flow, elements } = setup({ fetchFn: () => (++calls === 1 ? Promise.resolve(response(200, apiExample())) : pending.promise) });
+    elements.input.value = TRACKED;
+    await flow.submit();
+    assert.equal(elements.notice.hidden, false);
+    elements.input.value = LINK;
+    const second = flow.submit();
+    await flush();
+    assert.equal(elements.notice.textContent, "");
+    assert.equal(elements.notice.hidden, true);
+    pending.resolve(response(200, apiExample()));
+    await second;
+    assert.equal(elements.notice.hidden, true);
+  });
+
+  test("remover só o # não mostra aviso", async () => {
+    const { flow, elements, calls } = setup();
+    elements.input.value = `${LINK}#secao`;
+    await flow.submit();
+    assert.equal(calls[0]?.body, JSON.stringify({ url: LINK }));
+    assert.equal(elements.notice.hidden, true);
+    assert.equal(elements.notice.textContent, "");
+  });
+
+  test("some com um link inválido e com um novo login", async () => {
+    const { flow, elements } = setup();
+    elements.input.value = TRACKED;
+    await flow.submit();
+    elements.input.value = "exemplo.com";
+    await flow.submit();
+    assert.equal(elements.notice.hidden, true);
+    elements.input.value = TRACKED;
+    await flow.submit();
+    flow.reset();
+    assert.equal(elements.notice.hidden, true);
+    assert.equal(elements.notice.textContent, "");
   });
 });
 

@@ -6,6 +6,8 @@ Lista única do que falta, atualizada em **28/10/2026**, após o primeiro deploy
 
 - **Renovação do token:** migrar o callback do `prompt()` para não depender dos métodos de status do One Tap, que estão marcados como obsoletos com o FedCM (aviso `GSI_LOGGER` no console). Ver `docs/desenvolvimento-local.md`, "Renovação do ID token".
 - **Nomes de autor ou de local:** se um dia passarem a ser exibidos, oferecer a opção de ocultar antes de mostrar (hoje a interface mostra só "contém localização" e "contém autoria declarada", sem valores).
+- **`style.css` sem indentação.** O `style.css` do visual editorial ficou sem indentação (o #19 reformatou o arquivo). Reindentar num PR próprio, quando o visual definitivo for decidido.
+- **Visual definitivo.** O visual editorial é uma proposta do Matakeshii; o visual definitivo ainda será definido.
 
 ## Próximas fases
 

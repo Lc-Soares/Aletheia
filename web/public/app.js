@@ -73,6 +73,7 @@ const flow = createCheckFlow({
     input: /** @type {HTMLInputElement} */ (byId("check-url")),
     button: /** @type {HTMLButtonElement} */ (byId("check-submit")),
     progress: byId("check-progress"),
+    notice: byId("check-notice"),
     error: byId("check-error"),
     report: byId("report"),
     download: byId("download-json"),

@@ -6,6 +6,7 @@
 
 import { C, IDS } from "./report-classes.js";
 import { groupMedia } from "./report-model.js";
+import { summarizeSignals } from "./report-summary.js";
 import {
   C2PA_REASON_LABELS,
   C2PA_STATE_LABELS,
@@ -98,6 +99,22 @@ function noticesSection(notices) {
       ...(notices.length > 0 ? [node("ul", { children: notices.map((notice) => textNode("li", notice)) })] : []),
     ],
   });
+}
+
+/**
+ * Resumo dos sinais das mídias analisadas; some quando não há mídia analisada.
+ * @param {Report} report
+ * @returns {Descriptor[]}
+ */
+function summarySection(report) {
+  const lines = summarizeSignals(report);
+  if (lines.length === 0) return [];
+  return [
+    node("section", {
+      attrs: { class: C.summary },
+      children: [textNode("h3", "Resumo dos sinais"), node("ul", { children: lines.map((line) => textNode("li", line)) })],
+    }),
+  ];
 }
 
 /** @param {C2pa} c2pa @returns {Descriptor[]} */
@@ -210,6 +227,7 @@ export function describeReport(report) {
     children: [
       node("h2", { text: TEXT.title, attrs: { id: IDS.title, tabindex: "-1" } }),
       noticesSection(report.notices),
+      ...summarySection(report),
       pageSection(report.page),
       mediaSection(report),
     ],

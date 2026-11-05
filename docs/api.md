@@ -18,6 +18,15 @@ O ID token do Google vai em `Authorization: Bearer`. O verificador confere assin
 
 Corpo: `Content-Type: application/json` e exatamente `{"url":"https://..."}`, com 1 a 2048 caracteres, até 4 KiB. A URL vai no corpo, nunca na query string.
 
+**Normalização do link na interface** (`web/public/check-form.js`, `validateLink`). Antes de enviar, a interface faz duas coisas:
+- **Remove os parâmetros de rastreio** `utm_*`, `fbclid`, `gclid`, `igshid` e `mc_eid`, sem diferenciar maiúsculas, e mostra o aviso "Removemos parâmetros de rastreio do link antes de enviar." junto ao formulário.
+  - Só o nome do parâmetro conta: um valor que contém um desses nomes fica.
+  - Os demais parâmetros seguem exatamente como foram colados, sem recodificar (`%20`, `+` e a ordem não mudam). Se só havia rastreio, o `?` também sai.
+  - O nome é comparado como está no texto, sem decodificar. Um nome codificado (por exemplo `utm%5Fsource`) não é removido, e o link segue como foi colado.
+- **Descarta o fragmento** (`#...`), sem aviso. O servidor já o descartava (`fetcher/src/url-policy.ts`), então isso não muda o que é analisado.
+
+Um link com usuário e senha é recusado ainda no navegador. Um texto que o navegador não consegue interpretar como URL segue sem alteração, e quem valida de verdade é o servidor.
+
 Ordem de processamento (`api/src/check.ts`):
 1. autentica;
 2. confere o teto de checagens em andamento na instância (4);

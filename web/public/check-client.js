@@ -68,6 +68,7 @@ async function errorMessage(response, readBody) {
       return serverMessage(await readBody()) ?? MESSAGES.generic;
     case 429:
       return serverMessage(await readBody()) ?? rateLimitedText(response.headers.get("Retry-After"));
+    case 500:
     case 502:
       return MESSAGES.internal;
     case 503:
