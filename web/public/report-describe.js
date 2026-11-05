@@ -101,8 +101,11 @@ function noticesSection(notices) {
   });
 }
 
-/** Resumo dos sinais das mídias analisadas; some quando não há mídia analisada. */
-/** @param {Report} report @returns {Descriptor[]} */
+/**
+ * Resumo dos sinais das mídias analisadas; some quando não há mídia analisada.
+ * @param {Report} report
+ * @returns {Descriptor[]}
+ */
 function summarySection(report) {
   const lines = summarizeSignals(report);
   if (lines.length === 0) return [];
