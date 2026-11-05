@@ -172,3 +172,21 @@ label {
   color: var(--error);
   font-weight: 600;
 }
+
+.report-summary {
+  margin-top: 1.5rem;
+  padding: 0.75rem 1rem;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--link);
+  border-radius: 0.375rem;
+}
+
+.report-summary h3 {
+  margin-top: 0;
+}
+
+.report-summary ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}

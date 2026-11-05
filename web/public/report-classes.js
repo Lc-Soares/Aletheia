@@ -5,6 +5,7 @@ export const C = {
   report: "report",
   notices: "report-notices",
   fixedNotice: "report-fixed-notice",
+  summary: "report-summary",
   section: "report-section",
   facts: "report-facts",
   mediaGroup: "report-media",
