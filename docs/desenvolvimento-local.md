@@ -253,6 +253,7 @@ Roteiro manual do formulário e do relatório (`web/public`). Os testes automati
 | 8 | **Celular**: modo de dispositivo do DevTools, 375 px | Sem rolagem horizontal; URLs e hashes longos quebram; margem lateral de 16 px |
 | 9 | **Teclado**: só Tab, Enter e Shift+Tab | Todo controle é alcançável, o foco é visível, e Enter no campo envia |
 | 10 | **COOP**: recarregue `http://localhost:5000` pelo `dev-proxy`, abra DevTools > Rede e clique no documento | **Critério:** a resposta traz `Cross-Origin-Opener-Policy: same-origin-allow-popups`; o login funciona; "Verificar sessão" funciona. As mensagens do console (abaixo) são só observação |
+| 11 | **Link com rastreio**: `https://example.com/?a=1&utm_source=x#secao`, depois `https://example.com/` | Na primeira, aparece junto ao formulário "Removemos parâmetros de rastreio do link antes de enviar.", durante e depois da análise; no DevTools > Rede, o corpo do `/api/check` traz `https://example.com/?a=1`. Na segunda, o aviso some. Só um `#` (sem rastreio) não gera aviso (`docs/api.md`, "Normalização do link na interface") |
 
 **COOP e o console (observação, não critério).** Antes do cabeçalho, o console mostrou duas vezes "Cross-Origin-Opener-Policy policy would block the window.postMessage call", vindo do script do Google Identity. O COOP `same-origin-allow-popups` segue o guia do Google; **não se sabe se ele muda essas mensagens**. No passo 10, registre aqui se mudaram ou não. Se persistirem, a anotação é "observado, origem provável: política do próprio Google, não verificada".
 
