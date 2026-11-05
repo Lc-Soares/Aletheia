@@ -8,6 +8,19 @@ Lista única do que falta, atualizada em **28/10/2026**, após o primeiro deploy
 - **Nomes de autor ou de local:** se um dia passarem a ser exibidos, oferecer a opção de ocultar antes de mostrar (hoje a interface mostra só "contém localização" e "contém autoria declarada", sem valores).
 - **`style.css` sem indentação.** O `style.css` do visual editorial ficou sem indentação (o #19 reformatou o arquivo). Reindentar num PR próprio, quando o visual definitivo for decidido.
 - **Visual definitivo.** O visual editorial é uma proposta do Matakeshii; o visual definitivo ainda será definido.
+- **Teste mobile a 375 px do visual implantado** (`docs/desenvolvimento-local.md`, "Testar a interface", passo 8).
+- **`favicon.ico` 404** no endereço de produção.
+- **Relatório anterior continua na tela depois de um erro de validação do link** (decidir se deve ser limpo).
+- **Texto do resumo sobre imagens vindas de CDN**, que costumam chegar sem metadados (`web/public/report-summary.js`).
+
+## Direção do produto (decidido em 05/11/2026)
+
+- **Decidido:** não haverá detecção de texto escrito por IA nem classificador de "imagem gerada por IA". Mídia fica limitada a sinais declarados (C2PA, metadados) e, se confirmado, à marca d'água.
+- **A pesquisar, depois:**
+  - (a) fonte de busca para a cobertura em outros sites (GDELT, serviços de busca de terceiros, Cloud Vision Web Detection para imagens), com preço, cota, termos de uso e cobertura de veículos brasileiros; a API de busca do Google (Custom Search JSON) fecha em 01/01/2027, então não serve;
+  - (b) como extrair a afirmação ou o título da página para a busca (é a mesma pergunta da 5b);
+  - (c) o SynthID Detector é um site com login e cota, sem API encontrada; confirmar na página oficial do Google antes de citá-lo no relatório.
+- **Corrigido neste PR:** o Readme dizia "falsa ou verdadeira" e "gerada por IA".
 
 ## Próximas fases
 
@@ -34,7 +47,7 @@ Lista única do que falta, atualizada em **28/10/2026**, após o primeiro deploy
   - mídia dentro de `<noscript>` (`docs/fetcher.md`, "Decisões abertas").
 - **Dívida técnica:** criar um workspace compartilhado para o código duplicado entre API e fetcher (`docs/fetcher.md`, "Dívida técnica").
 - **Geocodificação pela ExifTools:** saber se ela usa um terceiro para gerar `address`/`addressPlusCode`. Revisão jurídica (`docs/arquitetura.md`; nota 9 de `docs/politica-privacidade.md`).
-- **Caminhos com sinal da ExifTools não exercitados.** Os testes reais só trouxeram imagens de CDN sem metadados (todos os sinais vazios). Falta uma página HTML de teste, controlada pela equipe, com uma imagem com EXIF e GPS, uma com autoria e uma com C2PA. O fetcher analisa páginas HTML, então uma URL direta de imagem provavelmente não serve para esse teste (confirmar em `fetcher/src/safe-fetch.ts`). Ver `docs/deploy.md`, Etapa 5.
+- **Caminhos com sinal da ExifTools não exercitados.** Os testes reais só trouxeram imagens de CDN sem metadados (todos os sinais vazios). Falta uma página HTML de teste, controlada pela equipe, com uma imagem com EXIF e GPS, uma com autoria e uma com C2PA. O fetcher analisa páginas HTML, então uma URL direta de imagem provavelmente não serve para esse teste (confirmar em `fetcher/src/safe-fetch.ts`). Hospedagem da página a decidir; sugestão: um segundo site do Firebase Hosting. Ver `docs/deploy.md`, Etapa 5.
 - **Seleção de mídias.** Imagens genéricas do site ocupam vagas das 8 analisadas: um `grey-placeholder.png` de 501 bytes e um `poster-1024x576.png` de metadados apareceram como grupo 1. Avaliar ignorar imagens minúsculas ou conhecidas como genéricas (`docs/fetcher.md`).
 - **Rota de saúde.** `/healthz` devolve 404 do Cloud Run quando chamado de fora (hipótese: caminho interceptado). Se for preciso um teste de saúde externo, renomear para `/health`. Sem urgência (`docs/deploy.md`, 3.5).
 - **HSTS.** O Hosting aplica o próprio valor; a linha de `Strict-Transport-Security` do `firebase.json` provavelmente não tem efeito. Avaliar remover (`docs/deploy.md`, 4.5).
