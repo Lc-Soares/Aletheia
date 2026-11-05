@@ -150,7 +150,7 @@ Os riscos mais altos são jurídicos (registros de acesso e LGPD), a dependênci
 | Pacotes npm comprometidos | Alta | Controles da seção de segurança |
 | Redes sociais bloqueiam o fetcher ou já removeram metadados | Média | Mensagem clara de "não foi possível analisar"; não prometer cobertura de todas as redes |
 | Custo de APIs pagas e abuso por contas descartáveis | Média | Cotas, alertas de orçamento, limite por IP e captcha |
-| Busca reversa e detectores de mídia sintética geram falsos positivos e negativos | Média | Mostrar como indicador, nunca como conclusão |
+| Busca reversa gera falsos positivos e negativos, e sinais declarados (C2PA, metadados) podem estar ausentes ou ter sido removidos | Média | Mostrar como indicador, nunca como conclusão |
 | Resultado perdido ao fechar a aba | Baixa | Aceito como consequência de não reter dados; relatório baixável |
 
 **A confirmar antes de implementar**
