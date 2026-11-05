@@ -1,4 +1,4 @@
-/* Visual editorial (creme e cobre). Só CSS próprio: sem @import, url(), fonte nem imagem externa. */
+/* Visual editorial (creme e cobre). Só CSS próprio, sem recurso externo. */
 :root {
 --bg: #faf8f5;
 --bg-top: #efece7;
@@ -334,7 +334,7 @@ border-top: 0;
 }
 
 .report-mono {
-font-family: var(--font-mono);
+font-family: var(--font-mono), monospace;
 font-size: 0.9rem;
 overflow-wrap: anywhere;
 word-break: break-all;
@@ -362,10 +362,10 @@ font-weight: 600;
 .report-summary {
   margin-top: 1.5rem;
   padding: 0.75rem 1rem;
-  background: #ffffff;
+  background: var(--card);
   border: 1px solid var(--border);
   border-left: 4px solid var(--link);
-  border-radius: 0.375rem;
+  border-radius: var(--radius);
 }
 
 .report-summary h3 {
