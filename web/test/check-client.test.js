@@ -176,7 +176,7 @@ describe("postCheck: mapa de erros", () => {
     ["502", response(502, { error: "internal", message: "texto do servidor" }), MESSAGES.internal],
     ["503", response(503, { error: "busy", message: "texto do servidor" }, { "Retry-After": "5" }), MESSAGES.busy],
     ["504", response(504, { error: "timeout" }), MESSAGES.timeout],
-    ["500", response(500, { error: "x", message: "stack trace" }), MESSAGES.generic],
+    ["500", response(500, { error: "x", message: "stack trace" }), MESSAGES.internal],
     ["404", response(404), MESSAGES.generic],
     ["403", response(403, { message: "bloqueado" }), MESSAGES.generic],
   ];
@@ -187,6 +187,13 @@ describe("postCheck: mapa de erros", () => {
       assert.doesNotMatch(expected.replace("(HTTP 403)", ""), /\b(400|413|415|429|502|503|504|500|404)\b/);
     });
   }
+
+  test("500 dá a mesma mensagem interna do 502, sem eco do corpo", async () => {
+    const internal = await setup({ replies: [response(502, { error: "internal" })] }).run();
+    const server = await setup({ replies: [response(500, { error: "x", message: "stack trace" })] }).run();
+    assert.deepEqual(server, internal);
+    assert.deepEqual(server, { status: "error", message: MESSAGES.internal });
+  });
 
   test("mensagens fixas: textos combinados", () => {
     assert.equal(MESSAGES.timeout, "A análise demorou demais. Tente novamente.");
