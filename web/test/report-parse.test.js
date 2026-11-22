@@ -403,7 +403,8 @@ describe("parseReport: marcações ClaimReview (page.claimReviews)", () => {
   test("texto higienizado e cortado: 300, data em 64, url em 2048", () => {
     const [mark] = marksOf([claimReview({ claimReviewed: `a\u202Eb\u0007${"x".repeat(1000)}`, datePublished: "2".repeat(200), url: `https://checagem.example/${"a".repeat(5000)}` })]);
     assert.ok(mark);
-    assert.equal(/[\u202E\u0007]/u.test(mark.claimReviewed ?? ""), false);
+    const claimed = mark.claimReviewed ?? "";
+    assert.equal(claimed.includes("\u202E") || claimed.includes("\u0007"), false);
     assert.equal(Array.from(mark.claimReviewed ?? "").length, 300);
     assert.equal(Array.from(mark.datePublished ?? "").length, 64);
     assert.equal(Array.from(mark.url ?? "").length, 2048);
