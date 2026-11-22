@@ -1,6 +1,6 @@
 # Pendências
 
-Lista única do que falta, atualizada em **28/10/2026**, após o primeiro deploy fechado. Cada item aponta para a doc que trata do assunto, quando ela existe; os detalhes ficam lá, não aqui.
+Lista única do que falta, atualizada em **22/11/2026**, após o deploy da Fase 5a. Cada item aponta para a doc que trata do assunto, quando ela existe; os detalhes ficam lá, não aqui.
 
 ## Interface (`web/`)
 
@@ -8,7 +8,6 @@ Lista única do que falta, atualizada em **28/10/2026**, após o primeiro deploy
 - **Nomes de autor ou de local:** se um dia passarem a ser exibidos, oferecer a opção de ocultar antes de mostrar (hoje a interface mostra só "contém localização" e "contém autoria declarada", sem valores).
 - **`style.css` sem indentação.** O `style.css` do visual editorial ficou sem indentação (o #19 reformatou o arquivo). Reindentar num PR próprio, quando o visual definitivo for decidido.
 - **Visual definitivo.** O visual editorial é uma proposta do Matakeshii; o visual definitivo ainda será definido.
-- **Teste mobile a 375 px do visual implantado** (`docs/desenvolvimento-local.md`, "Testar a interface", passo 8).
 - **`favicon.ico` 404** no endereço de produção.
 - **Relatório anterior continua na tela depois de um erro de validação do link** (decidir se deve ser limpo).
 - **Texto do resumo sobre imagens vindas de CDN**, que costumam chegar sem metadados (`web/public/report-summary.js`).
@@ -51,7 +50,9 @@ Lista única do que falta, atualizada em **28/10/2026**, após o primeiro deploy
   - mídia dentro de `<noscript>` (`docs/fetcher.md`, "Decisões abertas").
 - **Dívida técnica:** criar um workspace compartilhado para o código duplicado entre API e fetcher (`docs/fetcher.md`, "Dívida técnica").
 - **Geocodificação pela ExifTools:** saber se ela usa um terceiro para gerar `address`/`addressPlusCode`. Revisão jurídica (`docs/arquitetura.md`; nota 9 de `docs/politica-privacidade.md`).
-- **Caminhos com sinal da ExifTools não exercitados.** Os testes reais só trouxeram imagens de CDN sem metadados (todos os sinais vazios). Falta uma página HTML de teste, controlada pela equipe, com uma imagem com EXIF e GPS, uma com autoria e uma com C2PA. O fetcher analisa páginas HTML, então uma URL direta de imagem provavelmente não serve para esse teste (confirmar em `fetcher/src/safe-fetch.ts`). Hospedagem da página a decidir; sugestão: um segundo site do Firebase Hosting. Ver `docs/deploy.md`, Etapa 5.
+- **Caminhos com sinal da ExifTools não exercitados.** Os testes reais só trouxeram imagens de CDN sem metadados (todos os sinais vazios). Falta uma página HTML de teste, controlada pela equipe, com uma imagem com EXIF e GPS, uma com autoria e uma com C2PA. O fetcher analisa páginas HTML, então uma URL direta de imagem provavelmente não serve para esse teste (confirmar em `fetcher/src/safe-fetch.ts`). Hospedagem da página a decidir; sugestão: um segundo site do Firebase Hosting. Ver `docs/deploy.md`, Etapa 5. A mesma página de teste deve levar também um ClaimReview em JSON-LD, porque a Fase 5a ainda não foi validada com uma página real (ver o item da 5a em "Próximas fases").
+- **Teste intermitente do CI:** `fetcher/src/server.test.ts`, "prazo total" (`durationMs >= 400`, e o irmão de "inatividade", `>= 300`). `durationMs` é `Math.round(performance.now() - started)`, e os timers do Node podem disparar alguns milissegundos antes. Falhou uma vez no CI em 22/11/2026 e passou na segunda execução. Se voltar a falhar, trocar por uma tolerância de 50 ms.
+- **9 vulnerabilidades moderadas, só em dependências de desenvolvimento:** minimatch 7.0.0 a 11.0.0, via ESLint e typescript-eslint (GHSA-g3hv-75wg-m249). O `npm audit --omit=dev` dá 0, e o CI só reprova a partir de "high". Reavaliar quando houver uma versão corrigida do ESLint que respeite o `min-release-age=7`.
 - **Seleção de mídias.** Imagens genéricas do site ocupam vagas das 8 analisadas: um `grey-placeholder.png` de 501 bytes e um `poster-1024x576.png` de metadados apareceram como grupo 1. Avaliar ignorar imagens minúsculas ou conhecidas como genéricas (`docs/fetcher.md`).
 - **Rota de saúde.** `/healthz` devolve 404 do Cloud Run quando chamado de fora (hipótese: caminho interceptado). Se for preciso um teste de saúde externo, renomear para `/health`. Sem urgência (`docs/deploy.md`, 3.5).
 - **HSTS.** O Hosting aplica o próprio valor; a linha de `Strict-Transport-Security` do `firebase.json` provavelmente não tem efeito. Avaliar remover (`docs/deploy.md`, 4.5).

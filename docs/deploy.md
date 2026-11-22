@@ -351,6 +351,47 @@ Feita em 28/10/2026, pelo console do Google Cloud, sem comandos. Os nomes dos me
 
 Resultado (28/10/2026): todos os itens passaram. O relatório de uma página real gerou 8 mídias analisadas (as demais, "Fora do limite"), com os sinais vazios, como esperado para imagens de CDN que removem metadados. Isso **não valida** os caminhos com sinal (localização, autoria, C2PA): ver `docs/pendencias.md`.
 
+## Atualização de 22/11/2026 (Fase 5a: ClaimReview)
+
+Primeira atualização dos serviços no ar. A linha `page` do fetcher ganhou o campo `claimReviews` (`docs/api.md`, "Marcação ClaimReview").
+
+**Imagens.** Construídas pela Etapa 2 com a etiqueta `0ee000f` (merge do PR #22), uma para a API e outra para o fetcher.
+
+**Comando.** Em vez de `gcloud run deploy`, cada serviço foi atualizado só com a imagem nova:
+
+```
+gcloud run services update <serviço> --region=${REGION} --image=southamerica-east1-docker.pkg.dev/${PROJECT_ID}/aletheia/<api ou fetcher>:<TAG>
+```
+
+**Configuração preservada.** Depois do `update --image`, o `gcloud run services describe` da API mostrou as demais configurações preservadas (confirmado pelo usuário).
+
+**Ordem seguida:**
+
+1. API (`aletheia-api`).
+2. Teste de transição (API nova com o fetcher antigo, uma verificação pelo site antes de publicar o fetcher): **não conferido**.
+3. Fetcher (`aletheia-fetcher`). O 403 sem token depois da atualização (teste 3.5): **não conferido**.
+4. Hosting (`deploy --only hosting`, Etapa 4.4).
+
+**Resultado:**
+
+- Os cinco registros mais recentes do Cloud Run (1, 3, 1, 8 e 3 mídias) mostraram `outcome` "ok" e `exif` "ok" em todas as mídias.
+- O teste mobile a 375 px do visual (`docs/desenvolvimento-local.md`, "Testar a interface", passo 8) passou.
+- **A marcação ClaimReview não foi testada com uma página real**, porque nenhuma foi encontrada. Só foi testada com os exemplos oficiais (fixtures) e com páginas sem marcação, em que a seção não aparece. Ver `docs/pendencias.md`.
+
+**Como voltar atrás.** Ainda não foi executado. Primeiro, liste as revisões do serviço:
+
+```
+gcloud run revisions list --service=<serviço> --region=${REGION}
+```
+
+Depois, mande todo o tráfego para a revisão anterior:
+
+```
+gcloud run services update-traffic <serviço> --region=${REGION} --to-revisions=<revisão>=100
+```
+
+Cuidado com a ordem. Depois que a API estrita estiver no ar (a que exige `claimReviews` na linha `page`), voltar o fetcher para uma revisão anterior à Fase 5a dá 502 em toda checagem. Nesse caso, volte a API junto.
+
 ## Como retomar
 
 Para quem volta ao projeto (ou a uma conversa nova):
@@ -358,15 +399,16 @@ Para quem volta ao projeto (ou a uma conversa nova):
 - A fonte de verdade é este repositório (`docs/`). Cópias antigas em outros lugares (por exemplo, documentos de arquitetura e de política copiados para ferramentas externas) podem estar desatualizadas.
 - Em cada janela do Git Bash, defina `PROJECT_ID`, `REGION`, `TAG`, `FETCHER_SA` e `API_SA` (Etapa 3), e `FETCHER_URL`, `API_URL` e `HOST_URL` (leia pelos comandos `describe` / pelo deploy). Carregue o `secrets.sh` (fora do repositório) só para testes locais e para criar o segredo.
 - Serviços no ar (região `southamerica-east1`): `aletheia-fetcher` (privado), `aletheia-api` (público, atrás do Hosting), site do Hosting `<ID_DO_PROJETO>.web.app`. Imagens em `southamerica-east1-docker.pkg.dev/${PROJECT_ID}/aletheia/{api,fetcher}:<TAG>`.
-- Publicar uma versão nova, em ordem: (1) `master` atualizada, `git status --short` vazio; (2) novo `TAG` e builds da Etapa 2; (3) `gcloud run deploy` de cada serviço com a imagem nova; (4) `deploy --only hosting` se o `web/` mudou; (5) repetir os testes 3.5, 3.7 e 4.6. **A verificar na primeira atualização:** que o `gcloud run deploy` com só `--image` preserva as demais configurações do serviço; na dúvida, repita todas as flags da Etapa 3.
+- Publicar uma versão nova, em ordem: (1) `master` atualizada, `git status --short` vazio; (2) novo `TAG` e builds da Etapa 2; (3) `gcloud run services update <serviço> --region=${REGION} --image=<imagem:tag>` para cada serviço (preserva as demais configurações; ver "Atualização de 22/11/2026"), com a API antes do fetcher quando o contrato entre os dois mudar; (4) `deploy --only hosting` se o `web/` mudou; (5) repetir os testes 3.5, 3.7 e 4.6.
 - O que ainda não foi verificado e o que falta estão em "O que ainda não foi verificado" abaixo e em `docs/pendencias.md`.
 
 ## O que ainda não foi verificado
 
 - O corte de 60 s do Hosting (`docs/api.md`, "Capacidade e implantação"): só se mede com uma checagem longa.
 - A latência da checagem completa **pelo Hosting** (a medição de 4,5 s e 5,7 s foi direta na API).
-- Se o `gcloud run deploy` só com `--image` preserva as demais configurações (ver "Como retomar").
 - Se a CLI do Firebase funciona sempre com `ignore-scripts=true` (funcionou no primeiro deploy).
 - Por que o Hosting substitui o `Strict-Transport-Security` do `firebase.json` pelo próprio valor.
 - Que `/healthz` é interceptado pelo Cloud Run (hipótese forte, sem confirmação oficial).
 - Os caminhos com sinal da ExifTools: localização, autoria e C2PA (ver `docs/pendencias.md`).
+- Na atualização de 22/11/2026, dois testes não foram conferidos: o de transição (API nova com o fetcher antigo) e o 403 do fetcher sem token. Ver "Atualização de 22/11/2026".
+- A marcação ClaimReview com uma página real (ver "Atualização de 22/11/2026").

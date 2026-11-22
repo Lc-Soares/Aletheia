@@ -36,6 +36,21 @@ Leia antes de mudanças de arquitetura ou de privacidade:
 
 ## Segurança (não negociável)
 - **Segredos:** nunca em código, logs, testes ou commits. Vêm de variáveis de ambiente ou do Secret Manager. Não leia arquivos `.env*`.
+- **Verificação de segredos:** antes de cada commit, rode grep nos arquivos novos e alterados com esta lista (a mesma para todos os agentes):
+  - chave Google `AIza…`;
+  - chave privada (`BEGIN ... PRIVATE KEY`);
+  - `client_secret`;
+  - tokens do GitHub (`ghp_`, `github_pat_`);
+  - AWS (`AKIA`);
+  - Slack (`xox`);
+  - OAuth `ya29.`;
+  - `sk-`;
+  - `EXIFTOOLS_API_KEY=`;
+  - `X-API-Key:`;
+  - `?key=`;
+  - `Bearer` seguido de texto longo;
+  - atribuição de senha ou token;
+  - e-mails reais da equipe (confira por outro meio).
 - **Entrada hostil:** URLs, HTML, metadados e nomes de arquivo vêm do atacante.
 - **SSRF:** toda requisição a URL externa passa pelo módulo do `fetcher`. Ele resolve o DNS uma vez e conecta naquele IP, bloqueia loopback, redes privadas, link-local e o servidor de metadados do Google Cloud, revalida a cada redirecionamento (máx. 5), e limita tempo, tamanho e tipos de conteúdo. Nunca use `fetch` com URL do usuário fora dele.
 - **XSS:** escape todo texto vindo de páginas e metadados. Nunca use `innerHTML` com dado externo.
