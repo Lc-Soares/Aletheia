@@ -231,7 +231,7 @@ describe("POST /api/check: sinais por mídia", () => {
     let calls = 0;
     const outcome: FetcherOutcome = {
       kind: "page",
-      page: { finalUrl: PAGE_URL, title: null, headline: null, possiblyNeedsJavaScript: true, media: [], downloads: [] },
+      page: { finalUrl: PAGE_URL, title: null, headline: null, possiblyNeedsJavaScript: true, claimReviews: [], media: [], downloads: [] },
     };
     await withApi({ callFetcher: returning(outcome), extract: () => (calls++, Promise.resolve({ status: "unavailable" })) }, async (api) => {
       await report(api);

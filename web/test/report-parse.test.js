@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { parseReport } from "../public/report-parse.js";
-import { API_NOTICES, SHA, apiExample, okSignals, syntheticC2pa } from "./fixtures/report-fixtures.js";
+import { API_NOTICES, SHA, apiExample, claimReview, okSignals, syntheticC2pa, withClaimReviews } from "./fixtures/report-fixtures.js";
 
 /** @param {unknown} json */
 const parsed = (json) => /** @type {NonNullable<ReturnType<typeof parseReport>>} */ (parseReport(json));
@@ -36,7 +36,7 @@ describe("parseReport: formato geral", () => {
 
   test("mínimo aceito: page objeto e media lista; o resto vira ausente", () => {
     const report = parsed({ page: {}, media: [] });
-    assert.deepEqual(report, { page: { finalUrl: null, title: null, headline: null }, notices: [], media: [] });
+    assert.deepEqual(report, { page: { finalUrl: null, title: null, headline: null, claimReviews: [] }, notices: [], media: [] });
   });
 
   test("notices: só textos, no máximo 20; tipo errado vira lista vazia", () => {
@@ -49,7 +49,7 @@ describe("parseReport: formato geral", () => {
 
   test("campos de page com tipo errado viram ausentes sem derrubar os outros", () => {
     const json = { page: { finalUrl: 42, title: ["x"], headline: "Manchete" }, media: [] };
-    assert.deepEqual(parsed(json).page, { finalUrl: null, title: null, headline: "Manchete" });
+    assert.deepEqual(parsed(json).page, { finalUrl: null, title: null, headline: "Manchete", claimReviews: [] });
   });
 
   test("teto de 200 mídias", () => {
@@ -370,5 +370,46 @@ describe("parseReport: higienização", () => {
   test("assinaturas sintéticas e sinais de exemplo continuam consistentes", () => {
     assert.equal(okSignals().sha256, SHA);
     assert.equal(syntheticC2pa().aiGenerated, true);
+  });
+});
+
+describe("parseReport: marcações ClaimReview (page.claimReviews)", () => {
+  /** @param {unknown} claimReviews */
+  const marksOf = (claimReviews) => {
+    const json = apiExample();
+    json.page["claimReviews"] = claimReviews;
+    return parsed(json).page.claimReviews;
+  };
+
+  test("ausente, null ou de tipo errado: lista vazia", () => {
+    assert.deepEqual(parsed(apiExample()).page.claimReviews, []);
+    for (const value of [null, "x", 1, { 0: claimReview() }]) assert.deepEqual(marksOf(value), [], JSON.stringify(value));
+  });
+
+  test("marcação completa passa como veio; chaves desconhecidas são descartadas", () => {
+    assert.deepEqual(marksOf([{ ...claimReview(), itemReviewed: { author: "Pessoa" }, publisher: "x" }]), [claimReview()]);
+  });
+
+  test("itens que não são objeto são descartados; no máximo 5", () => {
+    assert.deepEqual(marksOf([null, "x", [claimReview()], claimReview()]), [claimReview()]);
+    assert.equal(parsed(withClaimReviews(9)).page.claimReviews.length, 5);
+  });
+
+  test("campos de tipo errado viram null sem derrubar os outros", () => {
+    const [mark] = marksOf([{ claimReviewed: 1, ratingLabel: ["Falso"], ratingValue: "1", bestRating: Number.POSITIVE_INFINITY, worstRating: Number.NaN, url: {}, authorName: null, datePublished: "2024" }]);
+    assert.deepEqual(mark, { claimReviewed: null, ratingLabel: null, ratingValue: null, bestRating: null, worstRating: null, url: null, authorName: null, datePublished: "2024" });
+  });
+
+  test("texto higienizado e cortado: 300, data em 64, url em 2048", () => {
+    const [mark] = marksOf([claimReview({ claimReviewed: `a\u202Eb\u0007${"x".repeat(1000)}`, datePublished: "2".repeat(200), url: `https://checagem.example/${"a".repeat(5000)}` })]);
+    assert.ok(mark);
+    assert.equal(/[\u202E\u0007]/u.test(mark.claimReviewed ?? ""), false);
+    assert.equal(Array.from(mark.claimReviewed ?? "").length, 300);
+    assert.equal(Array.from(mark.datePublished ?? "").length, 64);
+    assert.equal(Array.from(mark.url ?? "").length, 2048);
+  });
+
+  test("HTML continua texto", () => {
+    assert.equal(marksOf([claimReview({ ratingLabel: "<script>alert(1)</script>" })])[0]?.ratingLabel, "<script>alert(1)</script>");
   });
 });

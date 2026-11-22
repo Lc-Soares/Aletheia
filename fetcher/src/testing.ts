@@ -99,7 +99,7 @@ export function inlineExtractor(limits: ExtractLimits = DEFAULT_LIMITS): Extract
 // Worker de extração falso (URL data:) que responde uma página vazia depois de `delayMs`.
 export function slowWorker(delayMs: number): URL {
   const code = `import { parentPort } from "node:worker_threads";
-    setTimeout(() => parentPort.postMessage({ title: null, headline: null, media: [], possiblyNeedsJavaScript: false }), ${delayMs});`;
+    setTimeout(() => parentPort.postMessage({ title: null, headline: null, media: [], possiblyNeedsJavaScript: false, claimReviews: [] }), ${delayMs});`;
   return new URL(`data:text/javascript,${encodeURIComponent(code)}`);
 }
 
@@ -183,6 +183,99 @@ export const SHORT_STATIC_FIXTURE = `<!doctype html><html><head><title>Domínio 
 // Matéria só de texto, com scripts, sem imagens: conteúdo suficiente, sem sinal de JavaScript.
 export const TEXT_ONLY_FIXTURE = `<!doctype html><html><head><title>Coluna</title><script>window.analytics=[]</script></head>
 <body><main><article><h1>Coluna de opinião</h1>${"<p>Parágrafo de texto da coluna, sem nenhuma imagem.</p>".repeat(30)}</article></main></body></html>`;
+
+// ClaimReview: os dois exemplos JSON-LD da página oficial, transcritos literalmente (lidos em
+// 22/11/2026 em https://developers.google.com/search/docs/appearance/structured-data/factcheck?hl=pt-br).
+// O primeiro é o exemplo principal; o segundo, o de compatibilidade (datePublished na raiz e
+// itemReviewed do tipo CreativeWork). As variações dos testes partem deles.
+export const OFFICIAL_CLAIMREVIEW = `{
+  "@context": "https://schema.org",
+  "@type": "ClaimReview",
+  "url": "https://example.com/news/science/worldisflat.html",
+  "claimReviewed": "The world is flat",
+  "itemReviewed": {
+    "@type": "Claim",
+    "author": {
+      "@type": "Organization",
+      "name": "Square World Society",
+      "sameAs": "https://example.flatworlders.com/we-know-that-the-world-is-flat"
+    },
+    "datePublished": "2024-06-20",
+    "appearance": {
+      "@type": "OpinionNewsArticle",
+      "url": "https://example.com/news/a122121",
+      "headline": "Square Earth - Flat earthers for the Internet age",
+      "datePublished": "2024-06-22",
+      "author": {
+        "@type": "Person",
+        "name": "T. Tellar"
+      },
+      "image": "https://example.com/photos/1x1/photo.jpg",
+      "publisher": {
+        "@type": "Organization",
+        "name": "Skeptical News",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://example.com/logo.jpg"
+        }
+      }
+    }
+  },
+  "author": {
+    "@type": "Organization",
+    "name": "Example.com science watch"
+  },
+  "reviewRating": {
+    "@type": "Rating",
+    "ratingValue": 1,
+    "bestRating": 5,
+    "worstRating": 1,
+    "alternateName": "False"
+  }
+}`;
+
+export const OFFICIAL_CLAIMREVIEW_LEGACY = `{
+  "@context": "https://schema.org",
+  "@type": "ClaimReview",
+  "datePublished": "2024-06-22",
+  "url": "https://example.com/news/science/worldisflat.html",
+  "itemReviewed": {
+    "@type": "CreativeWork",
+    "author": {
+      "@type": "Organization",
+      "name": "Square World Society",
+      "sameAs": "https://example.flatworlders.com/we-know-that-the-world-is-flat"
+    },
+    "datePublished": "2024-06-20"
+  },
+  "claimReviewed": "The world is flat",
+  "author": {
+    "@type": "Organization",
+    "name": "Example.com science watch"
+  },
+  "reviewRating": {
+    "@type": "Rating",
+    "ratingValue": 1,
+    "bestRating": 5,
+    "worstRating": 1,
+    "alternateName" : "False"
+  }
+}`;
+
+// O que o exemplo principal deve gerar. O de compatibilidade é igual, com datePublished "2024-06-22".
+export const OFFICIAL_CLAIMREVIEW_MARK = Object.freeze({
+  claimReviewed: "The world is flat",
+  ratingLabel: "False",
+  ratingValue: 1,
+  bestRating: 5,
+  worstRating: 1,
+  url: "https://example.com/news/science/worldisflat.html",
+  authorName: "Example.com science watch",
+  datePublished: null,
+});
+
+// Bloco <script type="application/ld+json"> com o texto dado (sem escapar nada: o teste escolhe).
+export const ldScript = (json: string, type = "application/ld+json"): string => `<script type="${type}">${json}</script>`;
 
 // Servidor DNS UDP local para exercitar o c-ares de verdade, sem internet. Responde A e AAAA da
 // tabela, NOERROR sem resposta para tipo ausente (c-ares: ENODATA) e NXDOMAIN para nome ausente

@@ -17,7 +17,10 @@ import {
   html,
   image,
   inlineExtractor,
+  ldScript,
   newsArticleFixture,
+  OFFICIAL_CLAIMREVIEW,
+  OFFICIAL_CLAIMREVIEW_MARK,
   redirect,
   routeTransport,
   slowWorker,
@@ -71,6 +74,16 @@ describe("fetchPage", () => {
     assert.equal(transport.calls.some((c) => c.url.pathname === "/foto.png"), false);
     assert.equal(result.possiblyNeedsJavaScript, false);
     assert.equal(ok(result.downloads[0]).bytes.toString(), "JPEG");
+    assert.deepEqual(result.claimReviews, []);
+  });
+
+  test("ClaimReview da página chega ao resultado; a url da checagem nunca é buscada", async () => {
+    const transport = routeTransport({
+      "https://noticias.example/checagem": html(`<title>Checagem</title>${ldScript(OFFICIAL_CLAIMREVIEW)}`),
+    });
+    const result = await fetchPage("https://noticias.example/checagem", deps(transport));
+    assert.deepEqual(result.claimReviews, [OFFICIAL_CLAIMREVIEW_MARK]);
+    assert.deepEqual(transport.calls.map((c) => c.url.href), ["https://noticias.example/checagem"]);
   });
 
   test("mídias com destino interno são bloqueadas uma a uma, sem conexão", async () => {

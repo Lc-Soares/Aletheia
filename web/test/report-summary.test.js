@@ -47,11 +47,20 @@ function media(n, extra) {
  * @returns {Report}
  */
 function report(items) {
-  return { page: { finalUrl: null, title: null, headline: null }, notices: [], media: items };
+  return { page: { finalUrl: null, title: null, headline: null, claimReviews: [] }, notices: [], media: items };
 }
 
 /** @type {C2pa} */
 const c2paWithAi = { state: "valid", reason: null, signer: null, signedAt: null, generator: null, aiGenerated: true, checks: [] };
+
+test("marcações ClaimReview não entram no resumo (ficam na seção própria)", () => {
+  const items = [media(1, { c2pa: c2paWithAi }), media(2, {})];
+  const mark = { claimReviewed: "A Terra é plana", ratingLabel: "Falso", ratingValue: 1, bestRating: 5, worstRating: 1, url: null, authorName: null, datePublished: null };
+  const withMark = { ...report(items), page: { ...report(items).page, claimReviews: [mark] } };
+  assert.deepEqual(summarizeSignals(withMark), summarizeSignals(report(items)));
+  assert.doesNotMatch(summarizeSignals(withMark).join("\n"), /ClaimReview|checagem|Falso/i);
+  assert.deepEqual(summarizeSignals({ ...report([]), page: { ...report([]).page, claimReviews: [mark] } }), []);
+});
 
 test("sem mídia analisada, o resumo é vazio", () => {
   assert.deepEqual(summarizeSignals(report([])), []);

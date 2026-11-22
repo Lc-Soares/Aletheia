@@ -12,7 +12,7 @@ import { fetchPage } from "./fetch-page.ts";
 import { isPublicAddress } from "./ip-policy.ts";
 import { type Limits, resolveLimits } from "./limits.ts";
 import { createFetcherServer, domainHash, type LogEntry, type PageFetcher, shutdown } from "./server.ts";
-import { fakeResolver, html, image, routeTransport } from "./testing.ts";
+import { fakeResolver, html, image, ldScript, OFFICIAL_CLAIMREVIEW, OFFICIAL_CLAIMREVIEW_MARK, routeTransport } from "./testing.ts";
 
 const GOOD_TOKEN = "good.token.value";
 const verifier: CallerVerifier = async (token) => {
@@ -26,6 +26,7 @@ const transport = routeTransport({
     `<title>Título</title><img src="/a.jpg"><img src="http://169.254.169.254/x.jpg">`,
   ),
   "https://noticias.example/a.jpg": image("JPEG-BYTES"),
+  "https://noticias.example/checagem": html(`<title>Checagem</title>${ldScript(OFFICIAL_CLAIMREVIEW)}`),
 });
 const realFetcher: PageFetcher = (url, signal) =>
   fetchPage(url, {
@@ -132,6 +133,15 @@ describe("serviço do fetcher", () => {
     assert.equal(media["sha256"], createHash("sha256").update("JPEG-BYTES").digest("hex"));
     assert.equal(media["contentType"], "image/jpeg");
     assert.equal(lines[2]?.["error"], "blocked");
+    assert.deepEqual(lines[0]?.["claimReviews"], []);
+  });
+
+  test("linha page leva as marcações ClaimReview da página", async () => {
+    const res = await post(s.base, { url: "https://noticias.example/checagem" });
+    assert.equal(res.status, 200);
+    const lines = (await res.text()).trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    assert.deepEqual(lines.map((l) => l["type"]), ["page", "done"]);
+    assert.deepEqual(lines[0]?.["claimReviews"], [OFFICIAL_CLAIMREVIEW_MARK]);
   });
 
   test("a URL na query string é ignorada; só vale a do corpo", async () => {

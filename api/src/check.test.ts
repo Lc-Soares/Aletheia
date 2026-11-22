@@ -7,10 +7,12 @@ import { describe, mock, test } from "node:test";
 import { createGoogleVerifier, type TokenVerifier } from "./auth.ts";
 import type { CheckDeps } from "./check.ts";
 import { createFetcherClient, type FetcherCall, type FetcherOutcome } from "./fetcher-client.ts";
+import type { ClaimReviewMark } from "./fetcher-contract.ts";
 import { RateLimiter } from "./rate-limit.ts";
 import { createApiServer, shutdown, type LogEntry } from "./server.ts";
 import {
   CAPA_BYTES,
+  claimReviewMark,
   FOTO_REF,
   generateTestKeys,
   ICONE_REF,
@@ -74,6 +76,7 @@ function fetchedPage(): FetcherOutcome {
       title: "Matéria de exemplo",
       headline: "Manchete inventada",
       possiblyNeedsJavaScript: false,
+      claimReviews: [],
       media: [
         { url: "https://cdn.example/og/capa.jpg", kind: "image", source: "og:image", group: 1, score: 100, selected: true, skipReason: null },
         { url: String(FOTO_REF["url"]), kind: "image", source: "img", group: 2, score: 20, selected: true, skipReason: null },
@@ -313,6 +316,7 @@ describe("POST /api/check: relatório", () => {
         title: "Matéria de exemplo",
         headline: "Manchete inventada",
         possiblyNeedsJavaScript: false,
+        claimReviews: [],
       });
       const media = body["media"] as Array<Record<string, unknown>>;
       assert.equal(media.length, 3);
@@ -371,10 +375,27 @@ describe("POST /api/check: relatório", () => {
     }
   });
 
+  test("marcações ClaimReview da página vão em page.claimReviews, como vieram; nada delas no log", async () => {
+    const outcome = fetchedPage();
+    if (outcome.kind !== "page") throw new Error("fixture");
+    const marks = [claimReviewMark() as unknown as ClaimReviewMark, claimReviewMark({ claimReviewed: "<script>alert(1)</script>", url: null }) as unknown as ClaimReviewMark];
+    outcome.page.claimReviews = marks;
+    await withApi({ callFetcher: returning(outcome) }, async (api) => {
+      const body = (await (await post(api, { url: PAGE_URL })).json()) as { page: Record<string, unknown>; notices: string[] };
+      assert.deepEqual(body.page["claimReviews"], marks);
+      // A marcação não vira aviso nem veredito da API: os avisos são os mesmos de sempre.
+      assert.equal(body.notices.some((notice) => /ClaimReview|checagem/i.test(notice)), false);
+      const logged = JSON.stringify(api.logs);
+      for (const fragment of ["world is flat", "False", "science watch", "worldisflat", "script"]) {
+        assert.equal(logged.includes(fragment), false, `log contém ${fragment}`);
+      }
+    });
+  });
+
   test("sinal de JavaScript vira aviso de possibilidade", async () => {
     const outcome: FetcherOutcome = {
       kind: "page",
-      page: { finalUrl: PAGE_URL, title: null, headline: null, possiblyNeedsJavaScript: true, media: [], downloads: [] },
+      page: { finalUrl: PAGE_URL, title: null, headline: null, possiblyNeedsJavaScript: true, claimReviews: [], media: [], downloads: [] },
     };
     await withApi({ callFetcher: returning(outcome) }, async (api) => {
       const body = (await (await post(api, { url: PAGE_URL })).json()) as { page: Record<string, unknown>; notices: string[] };

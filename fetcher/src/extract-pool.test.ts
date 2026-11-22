@@ -10,7 +10,7 @@ import { FetchError, type FetchErrorCategory, OverloadedError } from "./errors.t
 import { createSemaphore, createWorkerExtractor } from "./extract-pool.ts";
 import { extractPage } from "./extract.ts";
 import { DEFAULT_LIMITS, resolveLimits } from "./limits.ts";
-import { formattingBomb, legitNewsPage, orphanEndTags } from "./testing.ts";
+import { formattingBomb, ldScript, legitNewsPage, OFFICIAL_CLAIMREVIEW, OFFICIAL_CLAIMREVIEW_MARK, orphanEndTags } from "./testing.ts";
 
 const PAGE = "https://noticias.example/";
 const never = () => new AbortController().signal;
@@ -37,6 +37,15 @@ describe("extrator em worker", () => {
     const tags = Array.from({ length: 10 }, (_, i) => `<img src="/i${i}.jpg">`).join("");
     const page = await createWorkerExtractor(resolveLimits({ maxSelectedMedia: 2 }))(tags, PAGE, never());
     assert.equal(page.media.filter((m) => m.selected).length, 2);
+  });
+
+  test("repassa os tetos de JSON-LD ao worker e devolve as marcações ClaimReview", async () => {
+    const claims = ["a", "b", "c"].map((c) => ldScript(JSON.stringify({ "@type": "ClaimReview", claimReviewed: c }))).join("");
+    const full = await createWorkerExtractor(resolveLimits())(`${ldScript(OFFICIAL_CLAIMREVIEW)}${claims}`, PAGE, never());
+    assert.deepEqual(full.claimReviews[0], OFFICIAL_CLAIMREVIEW_MARK);
+    assert.equal(full.claimReviews.length, 4);
+    assert.equal((await createWorkerExtractor(resolveLimits({ maxClaimReviews: 2 }))(claims, PAGE, never())).claimReviews.length, 2);
+    assert.equal((await createWorkerExtractor(resolveLimits({ maxJsonLdBlocks: 1 }))(claims, PAGE, never())).claimReviews.length, 1);
   });
 
   test("página legítima de 2 MiB cabe com folga no prazo de produção", { timeout: 30_000 }, async (t) => {
@@ -120,6 +129,15 @@ describe("extrator em worker", () => {
     assert.equal(limits.extractHeapMb, DEFAULT_LIMITS.extractHeapMb);
     assert.equal(limits.extractConcurrency, DEFAULT_LIMITS.extractConcurrency);
   });
+
+  test("nenhum teto de JSON-LD pode ser aumentado nem desligado", () => {
+    const keys = ["maxJsonLdBlocks", "maxJsonLdBlockChars", "maxJsonLdNodes", "maxJsonLdDepth", "maxClaimReviews"] as const;
+    for (const key of keys) {
+      for (const value of [1e9, 0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+        assert.equal(resolveLimits({ [key]: value })[key], DEFAULT_LIMITS[key], `${key} = ${value}`);
+      }
+    }
+  });
 });
 
 // Worker falso numa URL data: (nenhum arquivo extra na imagem) que posta a expressão dada.
@@ -137,6 +155,7 @@ describe("mensagem do worker é validada no processo principal", () => {
       headline: null,
       media: [{ url: "https://cdn.example/a.jpg", kind: "image", source: "img", group: 1, score: 0, selected: true, skipReason: null }],
       possiblyNeedsJavaScript: false,
+      claimReviews: [{ ...OFFICIAL_CLAIMREVIEW_MARK }],
     };
     assert.deepEqual(await run(JSON.stringify(page)), page);
   });
@@ -146,13 +165,18 @@ describe("mensagem do worker é validada no processo principal", () => {
     `{ url: ${JSON.stringify(url)}, kind: "image", source: ${JSON.stringify(source)}, group: 1, score: 0, selected: false, skipReason: "limit" }`;
   const many = (count: number, selected: boolean) =>
     `Array.from({ length: ${count} }, (_, i) => ({ url: "https://x.example/" + i, kind: "image", source: "img", group: i + 1, score: 0, selected: ${selected}, skipReason: ${selected ? "null" : '"limit"'} }))`;
+  const mark = (ratingValue: string, bestRating = "5") =>
+    `{ claimReviewed: "x", ratingLabel: null, ratingValue: ${ratingValue}, bestRating: ${bestRating}, worstRating: null, url: null, authorName: null, datePublished: null }`;
   const malformed: [string, string][] = [
     ["sem mensagem útil (undefined)", "undefined"],
-    ["título acima de 300 caracteres", `{ title: "a".repeat(301), headline: null, media: [], possiblyNeedsJavaScript: false }`],
-    ["esquema perigoso na mídia", `{ title: null, headline: null, media: [${item("file:///etc/passwd")}], possiblyNeedsJavaScript: false }`],
-    ["mídias demais", `{ title: null, headline: null, media: ${many(201, false)}, possiblyNeedsJavaScript: false }`],
-    ["source desconhecido", `{ title: null, headline: null, media: [${item("https://x.example/a", "iframe")}], possiblyNeedsJavaScript: false }`],
-    ["selecionadas acima de maxSelectedMedia", `{ title: null, headline: null, media: ${many(9, true)}, possiblyNeedsJavaScript: false }`],
+    ["título acima de 300 caracteres", `{ title: "a".repeat(301), headline: null, media: [], possiblyNeedsJavaScript: false, claimReviews: [] }`],
+    ["esquema perigoso na mídia", `{ title: null, headline: null, media: [${item("file:///etc/passwd")}], possiblyNeedsJavaScript: false, claimReviews: [] }`],
+    ["mídias demais", `{ title: null, headline: null, media: ${many(201, false)}, possiblyNeedsJavaScript: false, claimReviews: [] }`],
+    ["source desconhecido", `{ title: null, headline: null, media: [${item("https://x.example/a", "iframe")}], possiblyNeedsJavaScript: false, claimReviews: [] }`],
+    ["sem claimReviews", `{ title: null, headline: null, media: [], possiblyNeedsJavaScript: false }`],
+    ["ratingValue NaN (só chega por clone estruturado, nunca por JSON)", `{ title: null, headline: null, media: [], possiblyNeedsJavaScript: false, claimReviews: [${mark("NaN")}] }`],
+    ["bestRating Infinity", `{ title: null, headline: null, media: [], possiblyNeedsJavaScript: false, claimReviews: [${mark("1", "Infinity")}] }`],
+    ["selecionadas acima de maxSelectedMedia", `{ title: null, headline: null, media: ${many(9, true)}, possiblyNeedsJavaScript: false, claimReviews: [] }`],
   ];
   for (const [name, message] of malformed) {
     test(`${name}: FetchError network e worker encerrado`, async () => {

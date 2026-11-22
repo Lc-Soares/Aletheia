@@ -126,6 +126,22 @@ export const ICONE_REF = mediaRef({
   skipReason: "icon",
 });
 
+// Marcação ClaimReview como o fetcher a envia (exemplo principal da página oficial do Google).
+export function claimReviewMark(overrides: Line = {}): Line {
+  return {
+    claimReviewed: "The world is flat",
+    ratingLabel: "False",
+    ratingValue: 1,
+    bestRating: 5,
+    worstRating: 1,
+    url: "https://example.com/news/science/worldisflat.html",
+    authorName: "Example.com science watch",
+    datePublished: null,
+    ...overrides,
+  };
+}
+
+// Sem claimReviews: é a linha do fetcher anterior à Fase 5a, que a API aceita durante a transição.
 export function pageLine(overrides: Line = {}): Line {
   return {
     type: "page",
@@ -209,7 +225,7 @@ export function pageWithDownloads(count: number): FetcherOutcome {
     media.push({ url, kind: "image", source: "img", group: i, score: 20, selected: true, skipReason: null });
     downloads.push({ url, kind: "image", source: "img", group: i, ok: true, contentType: "image/jpeg", size: bytes.length, sha256: sha256Hex(bytes), bytes });
   }
-  return { kind: "page", page: { finalUrl: PAGE_URL, title: "Matéria", headline: null, possiblyNeedsJavaScript: false, media, downloads } };
+  return { kind: "page", page: { finalUrl: PAGE_URL, title: "Matéria", headline: null, possiblyNeedsJavaScript: false, claimReviews: [], media, downloads } };
 }
 
 // ---------------------------------------------------------------------------------------------

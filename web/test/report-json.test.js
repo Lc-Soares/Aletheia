@@ -4,7 +4,7 @@ import { describe, test } from "node:test";
 import { FIXED_NOTICE } from "../public/report-text.js";
 import { buildReportJson, reportFileName, saveReportJson } from "../public/report-json.js";
 import { parseReport } from "../public/report-parse.js";
-import { API_NOTICES, SHA, apiExample, syntheticC2pa, variantsPage } from "./fixtures/report-fixtures.js";
+import { API_NOTICES, CLAIM_REVIEW_NOTICE_TEXT, SHA, apiExample, claimReview, syntheticC2pa, variantsPage, withClaimReviews } from "./fixtures/report-fixtures.js";
 
 const NOW = new Date("2026-10-24T15:30:45.123Z");
 const LINK = "https://exemplo.com.br/materia";
@@ -39,7 +39,14 @@ describe("buildReportJson", () => {
   });
 
   test("página: URL final, título e manchete (como estão na tela)", () => {
-    assert.deepEqual(build(apiExample()).page, { finalUrl: "https://exemplo.com.br/materia", title: "Título da matéria", headline: "Manchete da matéria" });
+    assert.deepEqual(build(apiExample()).page, { finalUrl: "https://exemplo.com.br/materia", title: "Título da matéria", headline: "Manchete da matéria", claimReviews: [] });
+  });
+
+  test("marcações ClaimReview: vão em page.claimReviews e trazem o aviso fixo; sem elas, nenhum aviso", () => {
+    const json = build(withClaimReviews(2));
+    assert.deepEqual(json.page.claimReviews, [claimReview({ claimReviewed: "Afirmação 1" }), claimReview({ claimReviewed: "Afirmação 2" })]);
+    assert.deepEqual(json.notices, [FIXED_NOTICE, CLAIM_REVIEW_NOTICE_TEXT, ...API_NOTICES]);
+    assert.equal(build(apiExample()).notices.includes(CLAIM_REVIEW_NOTICE_TEXT), false);
   });
 
   test("a URL analisada é higienizada como todo texto", () => {
@@ -126,8 +133,10 @@ describe("buildReportJson", () => {
       "position", "url", "variantCount", "ignored", "code", "text", "download", "status", "message", "metadata", "signals",
       "fileType", "width", "height", "sha256", "dates", "tag", "value", "camera", "make", "model", "software",
       "containsLocation", "containsAuthorship", "c2pa", "state", "reason", "signer", "signedAt", "generator", "aiGenerated", "checks", "success", "failure",
+      "claimReviews", "claimReviewed", "ratingLabel", "ratingValue", "bestRating", "worstRating", "authorName", "datePublished",
     ]);
     const json = variantsPage();
+    json.page["claimReviews"] = [{ ...claimReview(), itemReviewed: { author: "Pessoa" }, publisher: "x", extra: 1 }];
     media(json, 1).metadata.signals.c2pa = syntheticC2pa();
     Object.assign(media(json, 1), { score: 99, source: "og:image", kind: "image", extra: 1 });
     for (const key of keysDeep(build(json))) assert.ok(allowed.has(key), `chave fora da lista: ${key}`);
