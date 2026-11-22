@@ -2,7 +2,7 @@
 
 Serviço Node.js no Cloud Run, atrás do Firebase Hosting (`/api/**`). Valida o login, aplica o limite do plano, chama o fetcher e devolve o relatório. É stateless: nada vai para disco ou banco, e os bytes das mídias só existem na memória durante a requisição.
 
-Fase 4 (4a, 4b e 4c): `POST /api/check` devolve a página, as mídias e, para cada mídia baixada, os sinais de metadados extraídos pela ExifTools (lista permitida). Nunca há veredito de verdadeiro ou falso. A resposta é um único JSON no fim; o envio por SSE fica para depois.
+Fase 4 (4a, 4b e 4c): `POST /api/check` devolve a página, as mídias e, para cada mídia baixada, os sinais de metadados extraídos pela ExifTools (lista permitida). Fase 5a: também as marcações ClaimReview que a página declara. Nunca há veredito de verdadeiro ou falso. A resposta é um único JSON no fim; o envio por SSE fica para depois.
 
 ## Rotas
 
@@ -39,7 +39,9 @@ Ordem de processamento (`api/src/check.ts`):
 
 ```json
 {
-  "page": { "finalUrl": "...", "title": "...", "headline": "...", "possiblyNeedsJavaScript": false },
+  "page": { "finalUrl": "...", "title": "...", "headline": "...", "possiblyNeedsJavaScript": false,
+    "claimReviews": [{ "claimReviewed": "...", "ratingLabel": "...", "ratingValue": 1, "bestRating": 5, "worstRating": 1,
+      "url": "https://...", "authorName": "...", "datePublished": "..." }] },
   "media": [
     { "url": "...", "kind": "image", "source": "og:image", "group": 1, "score": 100, "selected": true, "skipReason": null,
       "download": { "status": "ok", "contentType": "image/jpeg", "size": 12345, "sha256": "<hex>" },
@@ -67,6 +69,27 @@ Ordem de processamento (`api/src/check.ts`):
 - `title`, `headline` e as URLs vêm de terceiros. Quem exibir esse texto precisa escapá-lo.
 - `metadata` é `null` para as mídias não selecionadas e para as que falharam no download. Para as baixadas, ver "Sinais por mídia".
 - `notices` sempre traz o aviso de seleção heurística e os dois avisos fixos de C2PA. Quando `possiblyNeedsJavaScript` é verdadeiro, traz também o aviso de que a página possivelmente depende de JavaScript. O sinal é uma possibilidade, nunca um fato.
+- `page.claimReviews` traz as marcações ClaimReview que a própria página declarou, como o fetcher entregou (até 5; lista vazia quando não há). Ver "Marcação ClaimReview".
+
+### Marcação ClaimReview
+
+Fase 5a. O fetcher lê o JSON-LD da página (`docs/fetcher.md`, "ClaimReview") e a API repassa as marcações em `page.claimReviews`, sem mudar nada.
+
+| Campo | Origem na marcação | Formato |
+| --- | --- | --- |
+| `claimReviewed` | `claimReviewed` | texto, até 300 |
+| `ratingLabel` | `reviewRating.alternateName`, ou `reviewRating.name` na falta dele | texto, até 300 |
+| `ratingValue`, `bestRating`, `worstRating` | os de `reviewRating` | número finito, ou `null` se vier como texto ou faltar |
+| `url` | `url` | http(s) absoluta, sem usuário e senha, normalizada; senão `null`. **Nunca é buscada** |
+| `authorName` | `author` (texto, `author.name` ou o primeiro nome de uma lista) | texto, até 300 |
+| `datePublished` | `datePublished` da raiz (data da checagem) | texto, até 64 |
+
+- **Linguagem:** é o que a página declarou, nunca conclusão do Aletheia. A interface mostra a seção só quando há marcação, com o aviso fixo "A página se apresenta como uma checagem. Isso não indica que a checagem esteja correta.", a fonte (domínio e endereço da página) e o rótulo entre aspas. A seção fica fora do resumo de sinais. A ausência da marcação não diz nada e não é exibida.
+- **Não sai:** `itemReviewed` (autor, data e aparições da afirmação), `publisher` (que a página oficial não lista em ClaimReview), `author.url`, `sameAs`, imagens e qualquer outro campo.
+- **Logs:** nada da marcação vai para o log nem para `notices`.
+- **Transição do contrato (temporária).** A API aceita a linha `page` do fetcher **com ou sem** `claimReviews`. Sem o campo, que é o fetcher anterior à Fase 5a, a lista fica vazia.
+  - Ordem segura de implantação: **API primeiro, fetcher depois.** A API anterior exige as chaves exatas da linha `page` e recusaria o campo novo (502 em toda checagem).
+  - Depois que os dois estiverem no ar, o campo passa a ser obrigatório (`PAGE_KEYS_BEFORE_CLAIM_REVIEWS` em `api/src/fetcher-contract.ts`; pendência em `docs/pendencias.md`).
 
 ### Sinais por mídia
 
@@ -123,6 +146,7 @@ O 504 vale para qualquer prazo esgotado antes da linha `done`, inclusive quando 
   - Content-Type `application/x-ndjson`;
   - uma linha `page`, um resultado por mídia selecionada, sem repetir, e `done`;
   - campos com os tipos e valores conhecidos;
+  - `claimReviews` com até 5 marcações, chaves exatas, textos bem formados dentro do teto, números finitos e `url` http(s) normalizada sem usuário e senha (ausente só na transição, ver "Marcação ClaimReview");
   - content-type da mídia na lista do fetcher;
   - o base64 é decodificado linha a linha, e o tamanho e o SHA-256 são conferidos.
 
