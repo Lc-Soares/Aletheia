@@ -83,11 +83,13 @@ function downloadView(download: DownloadResult | undefined): Record<string, unkn
 // de metadados. Os bytes nunca saem daqui.
 function buildReport(page: FetchedPage, metadata: Map<string, MetadataView>): Record<string, unknown> {
   const downloads = new Map(page.downloads.map((download) => [download.url, download]));
-  const { finalUrl, title, headline, possiblyNeedsJavaScript } = page;
+  const { finalUrl, title, headline, possiblyNeedsJavaScript, claimReviews } = page;
   const notices: string[] = [NOTICES.selection, NOTICES.c2paRevocation, NOTICES.c2paSigner];
   if (possiblyNeedsJavaScript) notices.push(NOTICES.javascript);
   return {
-    page: { finalUrl, title, headline, possiblyNeedsJavaScript },
+    // claimReviews: o que a página declarou (ClaimReview), como o fetcher entregou; quem exibe cita
+    // como texto de terceiro, com a fonte, e nunca como veredito.
+    page: { finalUrl, title, headline, possiblyNeedsJavaScript, claimReviews },
     media: page.media.map((ref) => ({
       ...ref,
       download: ref.selected ? downloadView(downloads.get(ref.url)) : null,
