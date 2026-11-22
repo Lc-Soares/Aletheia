@@ -368,8 +368,8 @@ gcloud run services update <serviço> --region=${REGION} --image=southamerica-ea
 **Ordem seguida:**
 
 1. API (`aletheia-api`).
-2. Teste de transição (API nova com o fetcher antigo, uma verificação pelo site antes de publicar o fetcher): **não conferido**.
-3. Fetcher (`aletheia-fetcher`). O 403 sem token depois da atualização (teste 3.5): **não conferido**.
+2. Teste de transição (API nova com o fetcher antigo, uma verificação pelo site em aba anônima antes de publicar o fetcher): **conferido**, sem erro e sem seção de ClaimReview.
+3. Fetcher (`aletheia-fetcher`). O 403 sem token depois da atualização (teste 3.5): **conferido**.
 4. Hosting (`deploy --only hosting`, Etapa 4.4).
 
 **Resultado:**
@@ -410,5 +410,4 @@ Para quem volta ao projeto (ou a uma conversa nova):
 - Por que o Hosting substitui o `Strict-Transport-Security` do `firebase.json` pelo próprio valor.
 - Que `/healthz` é interceptado pelo Cloud Run (hipótese forte, sem confirmação oficial).
 - Os caminhos com sinal da ExifTools: localização, autoria e C2PA (ver `docs/pendencias.md`).
-- Na atualização de 22/11/2026, dois testes não foram conferidos: o de transição (API nova com o fetcher antigo) e o 403 do fetcher sem token. Ver "Atualização de 22/11/2026".
 - A marcação ClaimReview com uma página real (ver "Atualização de 22/11/2026").

@@ -26,7 +26,6 @@ Lista única do que falta, atualizada em **22/11/2026**, após o deploy da Fase 
 - **PDF do relatório**, gerado no navegador (`docs/arquitetura.md`). O JSON e a interface do relatório já existem.
 - **Fase 5**, uma de cada vez, com PR e teste próprios, nesta ordem:
   - 5a. ClaimReview em JSON-LD na própria página (sem chave). **Implementada** (`docs/fetcher.md`, "ClaimReview"). Falta:
-    - **deploy na ordem certa: API primeiro, fetcher depois** (`docs/api.md`, "Marcação ClaimReview");
     - testar com uma página real que tenha ClaimReview (só foi testado com fixtures a partir dos exemplos da página oficial);
     - A URL da checagem declarada é um link para site de terceiro, que pode apontar para phishing; a proteção real vem com o Web Risk (5c).
   - 5b. Fact Check Tools (`claims.search`), com chave de API restrita a essa API. **Decidir antes de onde vem o texto da afirmação** (a página? o título?);
