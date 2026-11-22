@@ -84,6 +84,10 @@ export type FetchedPage = {
   downloads: DownloadResult[];
 };
 
+// Só o que a busca de checagens (Fact Check Tools) precisa da linha page, avisado assim que ela chega.
+export type PageHeadline = { title: string | null; headline: string | null };
+export type PageListener = (page: PageHeadline) => void;
+
 export type ContractLimits = { maxMediaRefs: number; maxUrlLength: number; maxDownloads: number; maxMediaBytes: number; maxClaimReviews: number };
 export const CONTRACT_LIMITS: Readonly<ContractLimits> = Object.freeze({
   maxMediaRefs: 200,
@@ -233,13 +237,15 @@ function parseMediaError(value: PlainObject, identity: MediaIdentity): DownloadR
 // Linhas na ordem: uma "page", um resultado por mídia selecionada (sem repetir) e "done".
 export class FetcherStreamParser {
   readonly #limits: ContractLimits;
+  readonly #onPage: PageListener | undefined;
   #state: "start" | "media" | "done" = "start";
   #page: Omit<FetchedPage, "downloads"> | null = null;
   readonly #pending = new Map<string, MediaRef>();
   readonly #downloads: DownloadResult[] = [];
 
-  constructor(limits: ContractLimits = CONTRACT_LIMITS) {
+  constructor(limits: ContractLimits = CONTRACT_LIMITS, onPage?: PageListener) {
     this.#limits = limits;
+    this.#onPage = onPage;
   }
 
   accept(value: unknown): void {
@@ -249,6 +255,7 @@ export class FetcherStreamParser {
       this.#page = parsePage(value, this.#limits);
       for (const ref of this.#page.media) if (ref.selected) this.#pending.set(ref.url, ref);
       this.#state = "media";
+      this.#notifyPage(this.#page);
       return;
     }
     if (value["type"] === "done") {
@@ -262,6 +269,15 @@ export class FetcherStreamParser {
   finish(): FetchedPage {
     ensure(this.#state === "done" && this.#page !== null);
     return { ...this.#page, downloads: this.#downloads };
+  }
+
+  // Uma vez só, depois de a linha page ser validada. Quem ouve não atrapalha a leitura.
+  #notifyPage(page: PageHeadline): void {
+    try {
+      this.#onPage?.({ title: page.title, headline: page.headline });
+    } catch {
+      // ignorado: o erro de quem ouve não é da resposta do fetcher
+    }
   }
 
   #parseDownload(value: PlainObject): DownloadResult {

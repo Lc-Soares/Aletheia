@@ -11,6 +11,7 @@ import {
   isFetcherCategory,
   isHttpStatus,
   MalformedResponse,
+  type PageListener,
 } from "./fetcher-contract.ts";
 import type { ServiceTokenSource } from "./service-token.ts";
 
@@ -43,7 +44,8 @@ export type FetcherOutcome =
   | { kind: "timeout" }
   | { kind: "aborted" };
 
-export type FetcherCall = (url: string, signal: AbortSignal) => Promise<FetcherOutcome>;
+// onPage: avisado uma vez, assim que a linha page chega e é validada (antes das mídias).
+export type FetcherCall = (url: string, signal: AbortSignal, onPage?: PageListener) => Promise<FetcherOutcome>;
 export type FetcherClientOptions = { fetcherUrl: string; token: ServiceTokenSource; limits?: Partial<FetcherClientLimits> };
 
 const MAX_RETRY_AFTER_SECONDS = 5;
@@ -94,8 +96,8 @@ async function readLimited(body: ReadableStream<Uint8Array>, maxBytes: number): 
 
 // Corta o stream em linhas sem juntar tudo antes: cada linha tem teto próprio e a resposta inteira
 // também. Cada linha vai para o parser assim que chega, e o base64 é descartado depois de decodificado.
-async function readNdjson(body: ReadableStream<Uint8Array>, limits: FetcherClientLimits): Promise<FetchedPage> {
-  const parser = new FetcherStreamParser(CONTRACT_LIMITS);
+async function readNdjson(body: ReadableStream<Uint8Array>, limits: FetcherClientLimits, onPage?: PageListener): Promise<FetchedPage> {
+  const parser = new FetcherStreamParser(CONTRACT_LIMITS, onPage);
   const decoder = new TextDecoder("utf-8", { fatal: true });
   const acceptLine = (line: Buffer): void => {
     let value: unknown;
@@ -146,10 +148,10 @@ async function readFetchError(body: ReadableStream<Uint8Array> | null, limits: F
   return { kind: "fetch_error", category: error };
 }
 
-async function interpret(response: Response, limits: FetcherClientLimits): Promise<FetcherOutcome> {
+async function interpret(response: Response, limits: FetcherClientLimits, onPage?: PageListener): Promise<FetcherOutcome> {
   if (response.status === 200) {
     if (mediaType(response) !== "application/x-ndjson" || response.body === null) throw new MalformedResponse();
-    return { kind: "page", page: await readNdjson(response.body, limits) };
+    return { kind: "page", page: await readNdjson(response.body, limits, onPage) };
   }
   if (response.status === 422) return readFetchError(response.body, limits);
   await response.body?.cancel();
@@ -161,7 +163,7 @@ export function createFetcherClient(options: FetcherClientOptions): FetcherCall 
   const limits = resolveLimits(options.limits);
   const endpoint = new URL("/fetch", options.fetcherUrl);
 
-  return async (url, signal) => {
+  return async (url, signal, onPage) => {
     const deadline = AbortSignal.timeout(limits.deadlineMs);
     const combined = AbortSignal.any([signal, deadline]);
     const deadlineAt = performance.now() + limits.deadlineMs;
@@ -181,7 +183,7 @@ export function createFetcherClient(options: FetcherClientOptions): FetcherCall 
           redirect: "error",
           signal: combined,
         });
-        if (response.status !== 503) return await interpret(response, limits);
+        if (response.status !== 503) return await interpret(response, limits, onPage);
         await response.body?.cancel();
         const wait = retryWaitMs(response.headers.get("retry-after"), limits.maxRetryWaitMs);
         if (attempt >= limits.maxRetries || deadlineAt - performance.now() < wait + limits.retryReserveMs) return { kind: "busy" };

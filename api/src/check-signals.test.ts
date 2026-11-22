@@ -6,6 +6,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { TokenVerifier } from "./auth.ts";
 import type { CheckDeps } from "./check.ts";
 import { createExifToolsClient, type ExtractCall, type ExtractResult } from "./exiftools-client.ts";
+import type { FactCheckCall } from "./factcheck-client.ts";
 import { createFetcherClient, type FetcherOutcome } from "./fetcher-client.ts";
 import { createApiServer, shutdown, type LogEntry } from "./server.ts";
 import {
@@ -111,7 +112,10 @@ describe("POST /api/check: sinais por mídia", () => {
       await sleep(10);
       return { status: "config_error" };
     };
-    await withApi({ callFetcher: returning(pageWithDownloads(6)), extract }, async (api) => {
+    // Busca de checagens configurada: o "not_configured" do Fact Check não pode mascarar a procura
+    // por "config" (o motivo interno da ExifTools) no corpo.
+    const searchFactChecks: FactCheckCall = () => Promise.resolve({ status: "ok", claims: [] });
+    await withApi({ callFetcher: returning(pageWithDownloads(6)), extract, searchFactChecks }, async (api) => {
       const body = await report(api);
       assert.ok(calls <= 2, `${calls} chamadas com chave inválida`);
       for (const metadata of metadataOf(body)) assert.deepEqual(metadata, UNAVAILABLE);
