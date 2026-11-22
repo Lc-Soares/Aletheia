@@ -141,7 +141,7 @@ export function claimReviewMark(overrides: Line = {}): Line {
   };
 }
 
-// Sem claimReviews: é a linha do fetcher anterior à Fase 5a, que a API aceita durante a transição.
+// Linha page como o fetcher a envia: claimReviews é obrigatório (lista vazia quando não há marcação).
 export function pageLine(overrides: Line = {}): Line {
   return {
     type: "page",
@@ -149,6 +149,7 @@ export function pageLine(overrides: Line = {}): Line {
     title: "Mat\u00e9ria de exemplo",
     headline: "Manchete inventada",
     possiblyNeedsJavaScript: false,
+    claimReviews: [],
     media: [CAPA_REF, FOTO_REF, ICONE_REF],
     ...overrides,
   };

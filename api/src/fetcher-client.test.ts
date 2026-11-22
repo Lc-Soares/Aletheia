@@ -139,10 +139,17 @@ describe("cliente do fetcher: marcações ClaimReview", () => {
     assert.deepEqual(outcome.page.claimReviews, marks);
   });
 
-  test("fetcher anterior à Fase 5a (linha page sem claimReviews): aceito, com lista vazia", async () => {
+  test("linha page com claimReviews vazio: aceita, com lista vazia", async () => {
     const { outcome } = await run(respond(standardStream()));
     assert.ok(outcome.kind === "page");
     assert.deepEqual(outcome.page.claimReviews, []);
+  });
+
+  test("linha page sem claimReviews (fetcher anterior à Fase 5a): resposta malformada", async () => {
+    const oldLine = pageLine({ media: [ONLY_ICON] });
+    delete oldLine["claimReviews"];
+    assert.equal(Object.hasOwn(oldLine, "claimReviews"), false);
+    assertMalformed((await run(respond(ndjson([oldLine, DONE_LINE])))).outcome, "sem claimReviews");
   });
 
   test("limites exatos passam: 5 marcações, 300 caracteres, data de 64", async () => {
