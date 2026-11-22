@@ -310,7 +310,7 @@ describe("POST /api/check: relatório", () => {
       const text = await res.text();
       assert.equal(text.includes(CAPA_BYTES.toString("base64")), false, "bytes em base64 não podem ir na resposta");
       const body = JSON.parse(text) as Record<string, unknown>;
-      assert.deepEqual(Object.keys(body).sort(), ["media", "notices", "page"]);
+      assert.deepEqual(Object.keys(body).sort(), ["factCheck", "media", "notices", "page"]);
       assert.deepEqual(body["page"], {
         finalUrl: PAGE_URL,
         title: "Matéria de exemplo",

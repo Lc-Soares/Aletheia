@@ -19,7 +19,25 @@ describe("loadConfig", () => {
       fetcherUrl: "https://fetcher-xyz.a.run.app/",
       fetcherAudience: "https://fetcher-xyz.a.run.app",
       exifToolsApiKey: "chave-de-teste-123",
+      factCheckApiKey: null,
     });
+  });
+
+  test("FACTCHECK_API_KEY é opcional: ausente, vazia ou só espaços vira null e a API sobe", () => {
+    for (const value of [undefined, "", "   "]) {
+      assert.equal(loadConfig({ ...BASE, FACTCHECK_API_KEY: value }).factCheckApiKey, null, JSON.stringify(value));
+    }
+  });
+
+  test("FACTCHECK_API_KEY presente é lida, sem espaços nas pontas", () => {
+    assert.equal(loadConfig({ ...BASE, FACTCHECK_API_KEY: " chave-factcheck-456 " }).factCheckApiKey, "chave-factcheck-456");
+  });
+
+  test("a chave do Fact Check nunca aparece em erro de outra variável", () => {
+    assert.throws(
+      () => loadConfig({ ...BASE, FACTCHECK_API_KEY: "chave-factcheck-456", PORT: "x" }),
+      (error: unknown) => error instanceof Error && !error.message.includes("chave-factcheck-456"),
+    );
   });
 
   test("erro nomeia EXIFTOOLS_API_KEY quando falta ou está vazia, sem mostrar valor", () => {

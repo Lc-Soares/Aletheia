@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { parseReport } from "../public/report-parse.js";
-import { API_NOTICES, SHA, apiExample, claimReview, okSignals, syntheticC2pa, withClaimReviews } from "./fixtures/report-fixtures.js";
+import { API_NOTICES, SHA, apiExample, claimReview, factCheck, factCheckClaim, factCheckReview, okSignals, syntheticC2pa, withClaimReviews, withFactCheck } from "./fixtures/report-fixtures.js";
 
 /** @param {unknown} json */
 const parsed = (json) => /** @type {NonNullable<ReturnType<typeof parseReport>>} */ (parseReport(json));
@@ -36,7 +36,7 @@ describe("parseReport: formato geral", () => {
 
   test("mínimo aceito: page objeto e media lista; o resto vira ausente", () => {
     const report = parsed({ page: {}, media: [] });
-    assert.deepEqual(report, { page: { finalUrl: null, title: null, headline: null, claimReviews: [] }, notices: [], media: [] });
+    assert.deepEqual(report, { page: { finalUrl: null, title: null, headline: null, claimReviews: [] }, notices: [], media: [], factCheck: null });
   });
 
   test("notices: só textos, no máximo 20; tipo errado vira lista vazia", () => {
@@ -412,5 +412,82 @@ describe("parseReport: marcações ClaimReview (page.claimReviews)", () => {
 
   test("HTML continua texto", () => {
     assert.equal(marksOf([claimReview({ ratingLabel: "<script>alert(1)</script>" })])[0]?.ratingLabel, "<script>alert(1)</script>");
+  });
+});
+
+describe("parseReport: checagens publicadas (factCheck)", () => {
+  // Caracteres invisíveis montados pelo código, para não ficarem crus no arquivo.
+  const RLO = String.fromCharCode(0x202e);
+  const BEL = String.fromCharCode(7);
+  /** @param {unknown} value */
+  const factCheckOf = (value) => parsed(withFactCheck(value)).factCheck;
+
+  test("ausente ou que não é objeto: null (a API anterior não manda o campo)", () => {
+    assert.equal(parsed(apiExample()).factCheck, null);
+    for (const value of [null, "ok", 1, [], [factCheck()]]) assert.equal(factCheckOf(value), null, JSON.stringify(value));
+  });
+
+  test("ok completo passa como veio; chaves desconhecidas são descartadas em todos os níveis", () => {
+    assert.deepEqual(factCheckOf(factCheck()), factCheck());
+    const extra = factCheck({ extra: 1, claims: [{ ...factCheckClaim({ reviews: [{ ...factCheckReview(), score: 9 }] }), verdict: "x" }] });
+    assert.deepEqual(factCheckOf(extra), factCheck());
+  });
+
+  test("status: os quatro conhecidos; desconhecido ou de tipo errado vira unavailable", () => {
+    for (const status of ["ok", "unavailable", "skipped", "not_configured"]) assert.equal(factCheckOf(factCheck({ status }))?.status, status);
+    for (const status of ["novo", 1, null, "OK"]) assert.equal(factCheckOf(factCheck({ status }))?.status, "unavailable", String(status));
+  });
+
+  test("checagens só com status ok; texto enviado só com ok ou unavailable", () => {
+    assert.deepEqual(factCheckOf(factCheck({ status: "unavailable" })), { status: "unavailable", query: "Manchete da matéria", claims: [] });
+    for (const status of ["skipped", "not_configured"]) {
+      assert.deepEqual(factCheckOf(factCheck({ status })), { status, query: null, claims: [] });
+    }
+  });
+
+  test("tetos: 10 afirmações, 5 revisões por afirmação, e as listas nunca são lidas inteiras", () => {
+    const many = Array.from({ length: 30 }, (_, i) => factCheckClaim({ text: `Afirmação ${i}` }));
+    assert.equal(factCheckOf(factCheck({ claims: many }))?.claims.length, 10);
+    const reviews = Array.from({ length: 20 }, () => factCheckReview());
+    assert.equal(factCheckOf(factCheck({ claims: [factCheckClaim({ reviews })] }))?.claims[0]?.reviews.length, 5);
+    const junk = [...Array.from({ length: 50 }, () => null), factCheckClaim()];
+    assert.deepEqual(factCheckOf(factCheck({ claims: junk }))?.claims, []);
+  });
+
+  test("itens que não são objeto saem; claims ou reviews de tipo errado viram lista vazia", () => {
+    assert.deepEqual(factCheckOf(factCheck({ claims: [null, "x", factCheckClaim()] }))?.claims, [factCheckClaim()]);
+    assert.deepEqual(factCheckOf(factCheck({ claims: "x" }))?.claims, []);
+    assert.deepEqual(factCheckOf(factCheck({ claims: [factCheckClaim({ reviews: { 0: factCheckReview() } })] }))?.claims[0]?.reviews, []);
+  });
+
+  test("campos de tipo errado viram null sem derrubar os outros", () => {
+    const review = { publisherName: 1, publisherSite: ["x"], url: {}, title: null, reviewDate: 2014, textualRating: "Falso", languageCode: true };
+    const parsedFc = factCheckOf(factCheck({ query: 5, claims: [{ text: [], claimant: {}, claimDate: 1, reviews: [review] }] }));
+    assert.equal(parsedFc?.query, null);
+    assert.deepEqual(parsedFc?.claims[0], {
+      text: null,
+      claimant: null,
+      claimDate: null,
+      reviews: [{ publisherName: null, publisherSite: null, url: null, title: null, reviewDate: null, textualRating: "Falso", languageCode: null }],
+    });
+  });
+
+  test("texto higienizado e cortado: 300 nos textos, 64 em data e idioma, 2048 na url", () => {
+    const long = `a${RLO}b${BEL}${"x".repeat(1000)}`;
+    const parsedFc = factCheckOf(factCheck({ query: long, claims: [factCheckClaim({ text: long, reviews: [factCheckReview({ textualRating: long, reviewDate: "2".repeat(200), languageCode: "p".repeat(200), url: `https://c.example/${"a".repeat(5000)}` })] })] }));
+    const [claim] = parsedFc?.claims ?? [];
+    const [review] = claim?.reviews ?? [];
+    for (const text of [parsedFc?.query, claim?.text, review?.textualRating]) {
+      assert.equal((text ?? "").includes(RLO) || (text ?? "").includes(BEL), false);
+      assert.equal(Array.from(text ?? "").length, 300);
+    }
+    assert.equal(Array.from(review?.reviewDate ?? "").length, 64);
+    assert.equal(Array.from(review?.languageCode ?? "").length, 64);
+    assert.equal(Array.from(review?.url ?? "").length, 2048);
+  });
+
+  test("HTML continua texto", () => {
+    const parsedFc = factCheckOf(factCheck({ claims: [factCheckClaim({ reviews: [factCheckReview({ textualRating: "<script>alert(1)</script>" })] })] }));
+    assert.equal(parsedFc?.claims[0]?.reviews[0]?.textualRating, "<script>alert(1)</script>");
   });
 });

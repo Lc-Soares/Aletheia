@@ -4,7 +4,7 @@
 /**
  * Relatório cru da API. O tipo é solto de propósito (`any` nos campos): os testes alteram campos
  * aninhados e injetam valores de tipo errado para exercitar a validação.
- * @typedef {{ page: Record<string, any>, media: Array<Record<string, any>>, notices: string[] }} RawReport
+ * @typedef {{ page: Record<string, any>, media: Array<Record<string, any>>, notices: string[], factCheck?: any }} RawReport
  */
 
 /** @template T @param {T} value @returns {T} */
@@ -197,5 +197,61 @@ export function claimReview(overrides = {}) {
 export function withClaimReviews(count) {
   const json = apiExample();
   json.page["claimReviews"] = Array.from({ length: count }, (_, i) => claimReview({ claimReviewed: `Afirmação ${i + 1}` }));
+  return json;
+}
+
+export const FACT_CHECK_NOTICE_TEXT =
+  "Estas checagens foram publicadas por terceiros sobre afirmações parecidas com a manchete. Parecido não significa que seja a mesma afirmação, e o Aletheia não conclui nada.";
+
+/**
+ * Revisão como a API a entrega em factCheck.claims[].reviews (valores de exemplo da documentação
+ * do Fact Check Tools; url e title são nossos, a documentação não dá exemplo). Não vem de um site real.
+ * @param {Record<string, unknown>} [overrides]
+ * @returns {Record<string, any>}
+ */
+export function factCheckReview(overrides = {}) {
+  return copy({
+    publisherName: "Awesome Fact Checks",
+    publisherSite: "awesomefactchecks.com",
+    url: "https://awesomefactchecks.com/checagem/crime-doubled",
+    title: "Has crime doubled in the last 2 years?",
+    reviewDate: "2014-10-02T15:01:23Z",
+    textualRating: "Mostly false",
+    languageCode: "en",
+    ...overrides,
+  });
+}
+
+/**
+ * @param {Record<string, unknown>} [overrides]
+ * @returns {Record<string, any>}
+ */
+export function factCheckClaim(overrides = {}) {
+  return copy({
+    text: "Crime has doubled in the last 2 years.",
+    claimant: "John Doe",
+    claimDate: "2014-10-02T15:01:23.045123456Z",
+    reviews: [factCheckReview()],
+    ...overrides,
+  });
+}
+
+/**
+ * Campo factCheck da resposta da API (docs/api.md, "Fact Check Tools").
+ * @param {Record<string, unknown>} [overrides]
+ * @returns {Record<string, any>}
+ */
+export function factCheck(overrides = {}) {
+  return copy({ status: "ok", query: "Manchete da matéria", claims: [factCheckClaim()], ...overrides });
+}
+
+/**
+ * Exemplo de docs/api.md com o campo factCheck dado.
+ * @param {unknown} value
+ * @returns {RawReport}
+ */
+export function withFactCheck(value) {
+  const json = apiExample();
+  json.factCheck = value;
   return json;
 }

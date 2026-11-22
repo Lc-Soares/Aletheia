@@ -210,11 +210,67 @@ export function testCheckDeps(overrides: Partial<CheckDeps> = {}): CheckDeps {
   return {
     callFetcher: () => Promise.resolve({ kind: "failed", reason: "network" }),
     extract: () => Promise.resolve({ status: "ok", response: exifSuccess() }),
+    // Sem chave do Fact Check Tools, como num ambiente sem o segredo: nenhuma busca é feita.
+    searchFactChecks: () => Promise.resolve({ status: "not_configured" }),
     limiter: new RateLimiter({ windowMs: 3_600_000 }),
     maxInFlightChecks: 4,
     ...overrides,
   };
 }
+
+// ---------------------------------------------------------------------------------------------
+// Fact Check Tools falso. Os testes nunca chamam o Google. Valores de exemplo transcritos das
+// páginas oficiais (lidas em 22/11/2026):
+//   https://developers.google.com/fact-check/tools/api/reference/rest/v1alpha1/claims/search
+//   https://developers.google.com/fact-check/tools/api/reference/rest/v1alpha1/claims
+// A documentação não dá exemplo de url nem de title da revisão: esses dois valores são nossos.
+
+export const TEST_FACTCHECK_KEY = "chave-sentinela-factcheck-0123456789";
+
+export function factCheckReviewRaw(overrides: Line = {}): Line {
+  return {
+    publisher: { name: "Awesome Fact Checks", site: "awesomefactchecks.com" },
+    url: "https://awesomefactchecks.com/checagem/crime-doubled",
+    title: "Has crime doubled in the last 2 years?",
+    reviewDate: "2014-10-02T15:01:23Z",
+    textualRating: "Mostly false",
+    languageCode: "en",
+    ...overrides,
+  };
+}
+
+export function factCheckClaimRaw(overrides: Line = {}): Line {
+  return {
+    text: "Crime has doubled in the last 2 years.",
+    claimant: "John Doe",
+    claimDate: "2014-10-02T15:01:23.045123456Z",
+    claimReview: [factCheckReviewRaw()],
+    ...overrides,
+  };
+}
+
+// Corpo de claims:search: claims[] e nextPageToken (vazio = sem mais resultados).
+export function factCheckResponseRaw(claims: unknown[] = [factCheckClaimRaw()]): Line {
+  return { claims, nextPageToken: "" };
+}
+
+// O que a API devolve para o exemplo oficial (lista permitida, nomes nossos).
+export const FACT_CHECK_REVIEW_VIEW = Object.freeze({
+  publisherName: "Awesome Fact Checks",
+  publisherSite: "awesomefactchecks.com",
+  url: "https://awesomefactchecks.com/checagem/crime-doubled",
+  title: "Has crime doubled in the last 2 years?",
+  reviewDate: "2014-10-02T15:01:23Z",
+  textualRating: "Mostly false",
+  languageCode: "en",
+});
+
+export const FACT_CHECK_CLAIM_VIEW = Object.freeze({
+  text: "Crime has doubled in the last 2 years.",
+  claimant: "John Doe",
+  claimDate: "2014-10-02T15:01:23.045123456Z",
+  reviews: [FACT_CHECK_REVIEW_VIEW],
+});
 
 // Página com N mídias selecionadas e baixadas (bytes "midia-<i>"), para os testes de sinais.
 export function pageWithDownloads(count: number): FetcherOutcome {

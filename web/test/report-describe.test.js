@@ -7,15 +7,20 @@ import { summarizeSignals } from "../public/report-summary.js";
 import {
   API_NOTICES,
   CLAIM_REVIEW_NOTICE_TEXT,
+  FACT_CHECK_NOTICE_TEXT,
   FIXED_NOTICE_TEXT,
   SHA,
   apiExample,
   claimReview,
+  factCheck,
+  factCheckClaim,
+  factCheckReview,
   okSignals,
   singleMedia,
   syntheticC2pa,
   variantsPage,
   withClaimReviews,
+  withFactCheck,
 } from "./fixtures/report-fixtures.js";
 import { allText, attributesOf, byTag, flatten, nodesWithText, tagsOf } from "./tree.js";
 
@@ -537,5 +542,124 @@ describe("relatório: marcação ClaimReview declarada pela página", () => {
     const known = new Set(tagsOf(tree(apiExample())));
     for (const tag of tagsOf(tree(withClaimReviews(5)))) assert.ok(known.has(tag) || tag === "a", tag);
     for (const [, name] of attributesOf(tree(withClaimReviews(1)))) assert.notEqual(name, "style");
+  });
+});
+
+describe("relatório: checagens publicadas (Google Fact Check Tools)", () => {
+  const HEADING = "Checagens publicadas sobre afirmações parecidas (Google Fact Check Tools)";
+  const SEARCHED = "Buscamos por: «Manchete da matéria»";
+  const SENT = "Esse texto foi enviado ao Google Fact Check Tools.";
+  const EMPTY = "Nenhuma checagem encontrada para esse texto. Isso não diz nada sobre a matéria: a busca depende das palavras usadas e só cobre checagens que o Google indexou.";
+  /** @param {import("../public/report-describe.js").Descriptor} root @param {string} label */
+  const valuesOf = (root, label) => {
+    const nodes = flatten(root);
+    return nodes.flatMap((node, i) => (node.tag === "dt" && node.text === label ? [allText(/** @type {never} */ (nodes[i + 1]))] : []));
+  };
+  /** @param {Record<string, unknown>} review */
+  const withReview = (review) => withFactCheck(factCheck({ claims: [factCheckClaim({ reviews: [factCheckReview(review)] })] }));
+
+  test("campo ausente (API anterior): nenhuma seção", () => {
+    const text = allText(tree(apiExample()));
+    assert.equal(text.includes(HEADING), false);
+    assert.doesNotMatch(text, /Fact Check|Buscamos por/);
+  });
+
+  test("seção depois da página (e da marcação ClaimReview) e antes das mídias", () => {
+    assert.deepEqual(byTag(tree(withFactCheck(factCheck())), "h3").map((h) => h.text).slice(-3), ["Página analisada", HEADING, "Mídias"]);
+    const both = withClaimReviews(1);
+    both.factCheck = factCheck();
+    assert.deepEqual(byTag(tree(both), "h3").map((h) => h.text).slice(-4), ["Página analisada", "Marcação de checagem declarada pela página (ClaimReview)", HEADING, "Mídias"]);
+  });
+
+  test("sempre mostra o texto enviado, a linha de envio ao Google e o aviso fixo", () => {
+    for (const status of ["ok", "unavailable"]) {
+      const text = allText(tree(withFactCheck(factCheck({ status }))));
+      assert.ok(text.includes(SEARCHED), status);
+      assert.ok(text.includes(SENT), status);
+      assert.ok(text.includes(FACT_CHECK_NOTICE_TEXT), status);
+    }
+  });
+
+  test("cada afirmação e cada checagem: texto, quem afirmou, datas, publicador, rótulo entre aspas, título, idioma e endereço", () => {
+    const root = tree(withFactCheck(factCheck()));
+    assert.ok(byTag(root, "h4").some((h) => h.text === "Afirmação 1"));
+    assert.deepEqual(valuesOf(root, "Afirmação checada (segundo o publicador)"), ["Crime has doubled in the last 2 years."]);
+    assert.deepEqual(valuesOf(root, "Quem afirmou (segundo o publicador)"), ["John Doe"]);
+    assert.deepEqual(valuesOf(root, "Data da afirmação"), ["2014-10-02T15:01:23.045123456Z"]);
+    assert.deepEqual(valuesOf(root, "Publicado por"), ["Awesome Fact Checks (awesomefactchecks.com)"]);
+    assert.deepEqual(valuesOf(root, "Avaliação do publicador"), ["“Mostly false”"]);
+    assert.deepEqual(valuesOf(root, "Título da checagem"), ["Has crime doubled in the last 2 years?"]);
+    assert.deepEqual(valuesOf(root, "Data da checagem"), ["2014-10-02T15:01:23Z"]);
+    assert.deepEqual(valuesOf(root, "Idioma da checagem"), ["en"]);
+    assert.deepEqual(valuesOf(root, "Endereço da checagem"), ["https://awesomefactchecks.com/checagem/crime-doubled"]);
+  });
+
+  test("campos ausentes aparecem como 'Não informado'; publicador só com o nome ou só com o site", () => {
+    const empty = { publisherName: null, publisherSite: null, url: null, title: null, reviewDate: null, textualRating: null, languageCode: null };
+    const root = tree(withFactCheck(factCheck({ claims: [{ text: null, claimant: null, claimDate: null, reviews: [empty] }] })));
+    for (const label of ["Afirmação checada (segundo o publicador)", "Quem afirmou (segundo o publicador)", "Data da afirmação", "Publicado por", "Avaliação do publicador", "Título da checagem", "Data da checagem", "Idioma da checagem", "Endereço da checagem"]) {
+      assert.deepEqual(valuesOf(root, label), ["Não informado"], label);
+    }
+    assert.deepEqual(valuesOf(tree(withReview({ publisherSite: null })), "Publicado por"), ["Awesome Fact Checks"]);
+    assert.deepEqual(valuesOf(tree(withReview({ publisherName: null })), "Publicado por"), ["awesomefactchecks.com"]);
+  });
+
+  test("a ordem é a do Google: sem ordenação por rótulo", () => {
+    const claims = [factCheckClaim({ text: "Primeira", reviews: [factCheckReview({ textualRating: "True" })] }), factCheckClaim({ text: "Segunda", reviews: [factCheckReview({ textualRating: "False" })] })];
+    const root = tree(withFactCheck(factCheck({ claims })));
+    assert.deepEqual(valuesOf(root, "Afirmação checada (segundo o publicador)"), ["Primeira", "Segunda"]);
+  });
+
+  test("endereço http(s) vira link seguro cujo texto é o próprio endereço; outro esquema fica só texto", () => {
+    const url = "https://awesomefactchecks.com/checagem/crime-doubled?x=1";
+    const links = byTag(tree(withReview({ url })), "a").filter((a) => a.attrs?.["href"] === url);
+    assert.deepEqual(links, [{ tag: "a", text: url, attrs: { class: "report-link", href: url, rel: "noopener noreferrer nofollow", target: "_blank" } }]);
+    for (const bad of ["javascript:alert(1)", "https://u:p@checagem.example/", "/relativa", "data:text/html,x"]) {
+      const root = tree(withReview({ url: bad }));
+      assert.equal(attributesOf(root).some(([, name, value]) => name === "href" && value !== "https://exemplo.com.br/materia"), false, bad);
+      assert.deepEqual(valuesOf(root, "Endereço da checagem"), [bad]);
+    }
+  });
+
+  test("nenhuma checagem: aviso de que isso não diz nada sobre a matéria", () => {
+    const text = allText(tree(withFactCheck(factCheck({ claims: [] }))));
+    assert.ok(text.includes(EMPTY));
+    assert.ok(text.includes(SEARCHED));
+  });
+
+  test("indisponível, sem texto para buscar e sem chave: cada um com o seu texto, sem detalhe técnico", () => {
+    const cases = [
+      ["unavailable", "Não foi possível consultar as checagens agora."],
+      ["skipped", "Não buscamos checagens: a página não tem manchete nem título."],
+      ["not_configured", "A busca de checagens não está ativa neste ambiente."],
+    ];
+    for (const [status, expected] of cases) {
+      const text = allText(tree(withFactCheck(factCheck({ status }))));
+      assert.ok(text.includes(String(expected)), status);
+      assert.equal(text.includes(EMPTY), false, status);
+      assert.doesNotMatch(text, /http_|429|403|timeout/);
+    }
+    for (const status of ["skipped", "not_configured"]) {
+      const text = allText(tree(withFactCheck(factCheck({ status }))));
+      assert.equal(text.includes("Buscamos por"), false, status);
+      assert.equal(text.includes(SENT), false, status);
+    }
+  });
+
+  test("nenhum veredito do Aletheia: o rótulo só aparece entre aspas; o resumo de sinais não muda", () => {
+    const json = withReview({ textualRating: "Falso" });
+    let text = allText(tree(json)).replace("“Falso”", "").replace(FIXED_NOTICE_TEXT, "").replace(/Isso não indica fraude\./g, "");
+    for (const notice of API_NOTICES) text = text.replace(notice, "");
+    assert.doesNotMatch(text, /verdadeir|fals[ao]|fraud|fake|mentira/i);
+    const report = parseReport(json);
+    const plain = parseReport(apiExample());
+    assert.ok(report && plain);
+    assert.deepEqual(summarizeSignals(report), summarizeSignals(plain));
+  });
+
+  test("sem cor nem tag nova: só as tags e classes que o relatório já usa", () => {
+    const known = new Set(tagsOf(tree(apiExample())));
+    for (const tag of tagsOf(tree(withFactCheck(factCheck())))) assert.ok(known.has(tag) || tag === "a", tag);
+    for (const [, name] of attributesOf(tree(withFactCheck(factCheck())))) assert.notEqual(name, "style");
   });
 });

@@ -4,7 +4,7 @@ import { describe, test } from "node:test";
 import { describeReport } from "../public/report-describe.js";
 import { mount } from "../public/report-mount.js";
 import { parseReport } from "../public/report-parse.js";
-import { apiExample, claimReview, syntheticC2pa } from "./fixtures/report-fixtures.js";
+import { apiExample, claimReview, factCheck, syntheticC2pa } from "./fixtures/report-fixtures.js";
 import { createFakeDocument } from "./fake-dom.js";
 import { allText, attributesOf, flatten, tagsOf } from "./tree.js";
 
@@ -52,6 +52,17 @@ const FIELDS = [
   { name: "claimReviews.authorName", set: (j, v) => (claim(j)["authorName"] = v) },
   { name: "claimReviews.datePublished", set: (j, v) => (claim(j)["datePublished"] = v) },
   { name: "claimReviews.url", set: (j, v) => (claim(j)["url"] = v) },
+  { name: "factCheck.query", set: (j, v) => (j.factCheck.query = v) },
+  { name: "factCheck.claims.text", set: (j, v) => (fcClaim(j)["text"] = v) },
+  { name: "factCheck.claims.claimant", set: (j, v) => (fcClaim(j)["claimant"] = v) },
+  { name: "factCheck.claims.claimDate", set: (j, v) => (fcClaim(j)["claimDate"] = v) },
+  { name: "factCheck.reviews.publisherName", set: (j, v) => (fcReview(j)["publisherName"] = v) },
+  { name: "factCheck.reviews.publisherSite", set: (j, v) => (fcReview(j)["publisherSite"] = v) },
+  { name: "factCheck.reviews.title", set: (j, v) => (fcReview(j)["title"] = v) },
+  { name: "factCheck.reviews.reviewDate", set: (j, v) => (fcReview(j)["reviewDate"] = v) },
+  { name: "factCheck.reviews.textualRating", set: (j, v) => (fcReview(j)["textualRating"] = v) },
+  { name: "factCheck.reviews.languageCode", set: (j, v) => (fcReview(j)["languageCode"] = v) },
+  { name: "factCheck.reviews.url", set: (j, v) => (fcReview(j)["url"] = v) },
 ];
 
 /** Primeiro item de uma lista crua de objetos. @param {unknown} list @returns {Record<string, string>} */
@@ -62,6 +73,11 @@ const signals = (json) => /** @type {{ metadata: { signals: Record<string, unkno
 const c2pa = (json) => /** @type {Record<string, unknown>} */ (signals(json)["c2pa"]);
 /** @param {ReturnType<typeof base>} json @returns {Record<string, unknown>} */
 const claim = (json) => /** @type {Record<string, unknown>[]} */ (json.page["claimReviews"])[0] ?? {};
+/** @param {ReturnType<typeof base>} json @returns {Record<string, unknown>} */
+const fcClaim = (json) => /** @type {Record<string, unknown>[]} */ (json.factCheck.claims)[0] ?? {};
+/** @param {ReturnType<typeof base>} json @returns {Record<string, unknown>} */
+const fcReview = (json) => /** @type {Record<string, unknown>[]} */ (fcClaim(json)["reviews"])[0] ?? {};
+const FC_REVIEW_URL = "https://awesomefactchecks.com/checagem/crime-doubled";
 
 /** Relatório com todos os campos de terceiros preenchidos (C2PA sintético). */
 function base() {
@@ -70,6 +86,7 @@ function base() {
   first.metadata.signals["c2pa"] = syntheticC2pa();
   first.metadata.signals["software"] = ["Editor"];
   json.page["claimReviews"] = [claimReview()];
+  json.factCheck = factCheck();
   json.media.push({
     ...json.media[1],
     url: "https://exemplo.com.br/quarta.jpg",
@@ -146,7 +163,19 @@ describe("XSS: URL da checagem (ClaimReview) com esquema perigoso nunca vira lin
       claim(json)["url"] = url;
       const root = render(json);
       const hrefs = attributesOf(root).filter(([, name]) => name === "href").map(([, , value]) => String(value));
-      assert.deepEqual(hrefs, ["https://exemplo.com.br/materia", "https://exemplo.com.br/materia"]);
+      assert.deepEqual(hrefs, ["https://exemplo.com.br/materia", "https://exemplo.com.br/materia", FC_REVIEW_URL]);
+    });
+  }
+});
+
+describe("XSS: URL da checagem publicada (Fact Check Tools) com esquema perigoso nunca vira link", () => {
+  for (const url of ["javascript:alert(1)", "JAVASCRIPT:alert(1)", "data:text/html,<script>1</script>", "vbscript:x", `${String.fromCharCode(0x202e)}javascript:alert(1)`, "java\tscript:alert(1)", "https://u:p@checagem.example/", "//checagem.example/x"]) {
+    test(JSON.stringify(url).slice(0, 50), () => {
+      const json = base();
+      fcReview(json)["url"] = url;
+      const root = render(json);
+      const hrefs = attributesOf(root).filter(([, name]) => name === "href").map(([, , value]) => String(value));
+      assert.deepEqual(hrefs, ["https://exemplo.com.br/materia", "https://exemplo.com.br/materia", "https://checagem.example/terra-plana"]);
     });
   }
 });
@@ -187,6 +216,24 @@ describe("XSS: __proto__ e constructor no JSON não são lidos como herança", (
     assert.equal(report?.page.claimReviews[0]?.ratingLabel, "Falso");
   });
 
+  test("factCheck com __proto__ e constructor: só as chaves próprias conhecidas são lidas", () => {
+    const review = '{"__proto__":{"textualRating":"herdado","url":"https://herdado.example/"},"constructor":{"title":"herdado"},"publisherName":"Agência"}';
+    const claimText = `{"__proto__":{"text":"herdado"},"constructor":{"claimant":"herdado"},"reviews":[${review}]}`;
+    const text = `{"page":{${PAGE_FIELDS}},"media":[],"notices":[],"factCheck":{"__proto__":{"status":"ok","query":"herdado"},"constructor":{"claims":[]},"status":"ok","claims":[${claimText}]}}`;
+    const report = parseReport(JSON.parse(text));
+    assert.ok(report);
+    assert.deepEqual(report.factCheck, {
+      status: "ok",
+      query: null,
+      claims: [{ text: null, claimant: null, claimDate: null, reviews: [{ publisherName: "Agência", publisherSite: null, url: null, title: null, reviewDate: null, textualRating: null, languageCode: null }] }],
+    });
+    const root = describeReport(report);
+    assert.doesNotMatch(allText(root), /herdado/);
+    assert.equal(attributesOf(root).some(([, , value]) => String(value).includes("herdado")), false);
+    const onlyProto = parseReport(JSON.parse(`{"page":{${PAGE_FIELDS}},"media":[],"__proto__":{"factCheck":{"status":"ok"}}}`));
+    assert.equal(onlyProto?.factCheck, null);
+  });
+
   test("Object.prototype fica intacto depois do parse e da descrição", () => {
     const text = `{"page":{${PAGE_FIELDS},"__proto__":{"polluted":"sim"},"claimReviews":[{"__proto__":{"polluted":"sim"}}]},"media":[],"notices":[]}`;
     const report = parseReport(JSON.parse(text));
@@ -204,6 +251,7 @@ describe("XSS: o mount com o document falso mantém a carga como texto", () => {
       for (const field of FIELDS) field.set(json, payload.value);
       const root = render(json);
       assert.ok(allText(root).includes("Marcação 1"), "a seção de ClaimReview precisa estar na árvore montada");
+      assert.ok(allText(root).includes("Afirmação 1"), "a seção do Fact Check precisa estar na árvore montada");
       const { doc, created } = createFakeDocument();
       assert.doesNotThrow(() => mount(root, /** @type {never} */ (doc)));
       assert.equal(created.length, flatten(root).length, "só os nós do descritor viram elementos");
