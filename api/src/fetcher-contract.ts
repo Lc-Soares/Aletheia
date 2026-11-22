@@ -105,10 +105,6 @@ const KINDS: ReadonlySet<unknown> = new Set(MEDIA_KINDS);
 const SOURCES: ReadonlySet<unknown> = new Set(MEDIA_SOURCES);
 const REASONS: ReadonlySet<unknown> = new Set(SKIP_REASONS);
 const PAGE_KEYS = ["claimReviews", "finalUrl", "headline", "media", "possiblyNeedsJavaScript", "title", "type"];
-// TRANSIÇÃO (Fase 5a): a linha page do fetcher anterior não tem claimReviews. Aceita sem o campo
-// (lista vazia) para a API poder subir antes do fetcher; remover depois dos dois no ar
-// (docs/pendencias.md).
-const PAGE_KEYS_BEFORE_CLAIM_REVIEWS = PAGE_KEYS.filter((key) => key !== "claimReviews");
 const CLAIM_REVIEW_KEYS = ["authorName", "bestRating", "claimReviewed", "datePublished", "ratingLabel", "ratingValue", "url", "worstRating"];
 const MAX_DATE_LENGTH = 64;
 const REF_KEYS = ["group", "kind", "score", "selected", "skipReason", "source", "url"];
@@ -190,9 +186,8 @@ function toClaimReview(value: unknown, limits: ContractLimits): ClaimReviewMark 
   return { claimReviewed, ratingLabel, ratingValue, bestRating, worstRating, url, authorName, datePublished };
 }
 
-// Ausente só durante a transição (PAGE_KEYS_BEFORE_CLAIM_REVIEWS): vira lista vazia.
+// Obrigatório na linha page (PAGE_KEYS): lista, vazia quando a página não declara marcação.
 function parseClaimReviews(value: PlainObject, limits: ContractLimits): ClaimReviewMark[] {
-  if (!Object.hasOwn(value, "claimReviews")) return [];
   const list = value["claimReviews"];
   ensure(Array.isArray(list) && list.length <= limits.maxClaimReviews);
   const marks: ClaimReviewMark[] = [];
@@ -201,7 +196,7 @@ function parseClaimReviews(value: PlainObject, limits: ContractLimits): ClaimRev
 }
 
 function parsePage(value: PlainObject, limits: ContractLimits): Omit<FetchedPage, "downloads"> {
-  ensure(hasExactKeys(value, PAGE_KEYS) || hasExactKeys(value, PAGE_KEYS_BEFORE_CLAIM_REVIEWS));
+  ensure(hasExactKeys(value, PAGE_KEYS));
   const { finalUrl, title, headline, possiblyNeedsJavaScript, media } = value;
   ensure(isHttpUrl(finalUrl, limits.maxUrlLength) && isText(title) && isText(headline));
   ensure(typeof possiblyNeedsJavaScript === "boolean");
