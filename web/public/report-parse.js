@@ -17,6 +17,12 @@ export const MAX_CLAIM_REVIEWS = 5;
 // Folga para itens que não são objeto: a lista nunca é percorrida inteira.
 const MAX_CLAIM_REVIEW_ITEMS = 50;
 const LIMITS = { url: 2048, title: 300, headline: 300, notice: 500, message: 300, short: 64, software: 128, code: 128, claim: 300, date: 64 };
+/** Tetos das checagens publicadas (os mesmos do servidor). */
+const MAX_FACT_CHECK_CLAIMS = 10;
+const MAX_FACT_CHECK_REVIEWS = 5;
+// Só os primeiros itens de cada lista são olhados: a lista nunca é percorrida inteira.
+const MAX_FACT_CHECK_ITEMS = 50;
+const FACT_CHECK_STATUSES = ["ok", "unavailable", "skipped", "not_configured"];
 
 const SKIP_REASONS = ["variant", "icon", "unsupported_format", "low_score", "limit", "other"];
 const FAILED_METADATA = ["unavailable", "unsupported", "too_large", "error", "not_analyzed"];
@@ -79,10 +85,41 @@ const FAILED_METADATA = ["unavailable", "unsupported", "too_large", "error", "no
  */
 
 /**
+ * Checagem que um terceiro publicou (Google Fact Check Tools). textualRating é o rótulo do
+ * publicador: a tela cita, com o publicador e o link, e nunca trata como conclusão.
+ * @typedef {object} FactCheckReview
+ * @property {string | null} publisherName
+ * @property {string | null} publisherSite
+ * @property {string | null} url
+ * @property {string | null} title
+ * @property {string | null} reviewDate
+ * @property {string | null} textualRating
+ * @property {string | null} languageCode
+ */
+
+/**
+ * @typedef {object} FactCheckClaim
+ * @property {string | null} text
+ * @property {string | null} claimant
+ * @property {string | null} claimDate
+ * @property {FactCheckReview[]} reviews
+ */
+
+/**
+ * query: o texto enviado ao Google (só com ok e unavailable). claims: só com ok.
+ * @typedef {object} FactCheck
+ * @property {"ok" | "unavailable" | "skipped" | "not_configured"} status
+ * @property {string | null} query
+ * @property {FactCheckClaim[]} claims
+ */
+
+/**
+ * `factCheck`: null quando a API não mandou o campo (versão anterior) ou mandou fora do formato.
  * @typedef {object} Report
  * @property {{ finalUrl: string | null, title: string | null, headline: string | null, claimReviews: ClaimReview[] }} page
  * @property {string[]} notices
  * @property {MediaItem[]} media
+ * @property {FactCheck | null} factCheck
  */
 
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
@@ -254,6 +291,62 @@ function claimReviews(page) {
 }
 
 /**
+ * Até `max` objetos dos primeiros itens da lista, cada um lido por `read`.
+ * @template T
+ * @param {unknown} value
+ * @param {number} max
+ * @param {(raw: Record<string, unknown>) => T} read
+ * @returns {T[]}
+ */
+function firstObjects(value, max, read) {
+  if (!Array.isArray(value)) return [];
+  /** @type {T[]} */
+  const found = [];
+  for (const item of value.slice(0, MAX_FACT_CHECK_ITEMS)) {
+    if (isObject(item)) found.push(read(item));
+    if (found.length >= max) break;
+  }
+  return found;
+}
+
+/** @param {Record<string, unknown>} raw @returns {FactCheckReview} */
+function factCheckReview(raw) {
+  return {
+    publisherName: sanitizeText(own(raw, "publisherName"), LIMITS.claim),
+    publisherSite: sanitizeText(own(raw, "publisherSite"), LIMITS.title),
+    url: sanitizeText(own(raw, "url"), LIMITS.url),
+    title: sanitizeText(own(raw, "title"), LIMITS.claim),
+    reviewDate: sanitizeText(own(raw, "reviewDate"), LIMITS.date),
+    textualRating: sanitizeText(own(raw, "textualRating"), LIMITS.claim),
+    languageCode: sanitizeText(own(raw, "languageCode"), LIMITS.short),
+  };
+}
+
+/** @param {Record<string, unknown>} raw @returns {FactCheckClaim} */
+function factCheckClaim(raw) {
+  return {
+    text: sanitizeText(own(raw, "text"), LIMITS.claim),
+    claimant: sanitizeText(own(raw, "claimant"), LIMITS.claim),
+    claimDate: sanitizeText(own(raw, "claimDate"), LIMITS.date),
+    reviews: firstObjects(own(raw, "reviews"), MAX_FACT_CHECK_REVIEWS, factCheckReview),
+  };
+}
+
+/** Status desconhecido vira "unavailable": a tela nunca inventa um estado. @param {Record<string, unknown>} json @returns {FactCheck | null} */
+function factCheck(json) {
+  const value = own(json, "factCheck");
+  if (!isObject(value)) return null;
+  const raw = own(value, "status");
+  const status = /** @type {FactCheck["status"]} */ (typeof raw === "string" && FACT_CHECK_STATUSES.includes(raw) ? raw : "unavailable");
+  const sent = status === "ok" || status === "unavailable";
+  return {
+    status,
+    query: sent ? sanitizeText(own(value, "query"), LIMITS.claim) : null,
+    claims: status === "ok" ? firstObjects(own(value, "claims"), MAX_FACT_CHECK_CLAIMS, factCheckClaim) : [],
+  };
+}
+
+/**
  * @param {unknown} json Corpo da resposta 200, como veio do servidor.
  * @returns {Report | null} null quando fora do formato.
  */
@@ -275,5 +368,6 @@ export function parseReport(json) {
     },
     notices: textList(json["notices"], MAX_NOTICES, LIMITS.notice),
     media,
+    factCheck: factCheck(json),
   };
 }

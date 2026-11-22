@@ -628,6 +628,7 @@ describe("relatório: checagens publicadas (Google Fact Check Tools)", () => {
   });
 
   test("indisponível, sem texto para buscar e sem chave: cada um com o seu texto, sem detalhe técnico", () => {
+    /** @type {Array<[string, string]>} */
     const cases = [
       ["unavailable", "Não foi possível consultar as checagens agora."],
       ["skipped", "Não buscamos checagens: a página não tem manchete nem título."],

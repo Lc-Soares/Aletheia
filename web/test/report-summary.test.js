@@ -47,7 +47,7 @@ function media(n, extra) {
  * @returns {Report}
  */
 function report(items) {
-  return { page: { finalUrl: null, title: null, headline: null, claimReviews: [] }, notices: [], media: items };
+  return { page: { finalUrl: null, title: null, headline: null, claimReviews: [] }, notices: [], media: items, factCheck: null };
 }
 
 /** @type {C2pa} */
