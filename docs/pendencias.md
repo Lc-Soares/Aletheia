@@ -28,7 +28,6 @@ Lista única do que falta, atualizada em **28/10/2026**, após o primeiro deploy
 - **Fase 5**, uma de cada vez, com PR e teste próprios, nesta ordem:
   - 5a. ClaimReview em JSON-LD na própria página (sem chave). **Implementada** (`docs/fetcher.md`, "ClaimReview"). Falta:
     - **deploy na ordem certa: API primeiro, fetcher depois** (`docs/api.md`, "Marcação ClaimReview");
-    - **tornar `claimReviews` obrigatório na linha `page`** (`api/src/fetcher-contract.ts`, `PAGE_KEYS_BEFORE_CLAIM_REVIEWS`), num PR pequeno, depois que API e fetcher novos estiverem no ar;
     - testar com uma página real que tenha ClaimReview (só foi testado com fixtures a partir dos exemplos da página oficial);
     - A URL da checagem declarada é um link para site de terceiro, que pode apontar para phishing; a proteção real vem com o Web Risk (5c).
   - 5b. Fact Check Tools (`claims.search`), com chave de API restrita a essa API. **Decidir antes de onde vem o texto da afirmação** (a página? o título?);
