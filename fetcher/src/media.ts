@@ -29,16 +29,52 @@ export type MediaRef = {
   selected: boolean;
   skipReason: SkipReason | null;
 };
+// Marcação ClaimReview declarada pela própria página (JSON-LD, ver docs/fetcher.md). Só estes
+// campos saem; itemReviewed, publisher e o resto ficam de fora. É o que a página declarou, nunca
+// uma conclusão nossa. url: http(s) absoluta, sem usuário e senha, normalizada (nunca buscada).
+export type ClaimReviewMark = {
+  claimReviewed: string | null;
+  ratingLabel: string | null;
+  ratingValue: number | null;
+  bestRating: number | null;
+  worstRating: number | null;
+  url: string | null;
+  authorName: string | null;
+  datePublished: string | null;
+};
+// Em ordem alfabética, como o validador compara.
+export const CLAIM_REVIEW_KEYS = [
+  "authorName",
+  "bestRating",
+  "claimReviewed",
+  "datePublished",
+  "ratingLabel",
+  "ratingValue",
+  "url",
+  "worstRating",
+] as const;
+
 export type ExtractedPage = {
   title: string | null;
   headline: string | null;
   media: MediaRef[];
   possiblyNeedsJavaScript: boolean;
+  claimReviews: ClaimReviewMark[];
 };
 
 // Faixa fixa da pontuação, conferida também pelo validador da mensagem do worker.
 export const MIN_SCORE = -1000;
 export const MAX_SCORE = 1000;
 
-// Teto de título e manchete, em unidades UTF-16 (o mesmo que String.prototype.slice conta).
+// Teto de título, manchete e textos da marcação ClaimReview, em unidades UTF-16 (o mesmo que
+// String.prototype.slice conta). A data da marcação tem teto próprio, menor.
 export const MAX_TEXT_LENGTH = 300;
+export const MAX_DATE_LENGTH = 64;
+
+// Espaços colapsados, corte em `max` e toWellFormed: o corte conta unidades UTF-16 e pode partir
+// um par surrogate; a metade solta vira U+FFFD (o validador do processo principal recusa texto
+// mal formado). Texto vazio vira null.
+export function normalizeText(text: string, max: number = MAX_TEXT_LENGTH): string | null {
+  const normalized = text.replace(/\s+/g, " ").trim().slice(0, max).toWellFormed();
+  return normalized === "" ? null : normalized;
+}

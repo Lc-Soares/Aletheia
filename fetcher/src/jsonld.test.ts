@@ -93,8 +93,9 @@ describe("ClaimReview: formas aceitas", () => {
   });
 
   test("@context não é exigido", () => {
-    const { "@context": _context, ...rest } = official();
-    assert.deepEqual(reviews(ldScript(JSON.stringify(rest))), [OFFICIAL_CLAIMREVIEW_MARK]);
+    const withoutContext = official();
+    delete withoutContext["@context"];
+    assert.deepEqual(reviews(ldScript(JSON.stringify(withoutContext))), [OFFICIAL_CLAIMREVIEW_MARK]);
   });
 
   test("bloco que não é objeto nem array é ignorado", () => {

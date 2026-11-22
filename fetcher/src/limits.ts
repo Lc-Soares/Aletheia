@@ -21,6 +21,12 @@ export type Limits = {
   dnsHopMs: number;
   streamIdleMs: number;
   streamTotalMs: number;
+  // JSON-LD (ClaimReview, Fase 5a), lido dentro do worker de extração.
+  maxJsonLdBlocks: number;
+  maxJsonLdBlockChars: number;
+  maxJsonLdNodes: number;
+  maxJsonLdDepth: number;
+  maxClaimReviews: number;
 };
 
 const MIB = 1024 * 1024;
@@ -47,6 +53,11 @@ export const DEFAULT_LIMITS: Readonly<Limits> = Object.freeze({
   dnsHopMs: 3_000,
   streamIdleMs: 10_000,
   streamTotalMs: 60_000,
+  maxJsonLdBlocks: 20,
+  maxJsonLdBlockChars: 256 * 1024,
+  maxJsonLdNodes: 2_000,
+  maxJsonLdDepth: 16,
+  maxClaimReviews: 5,
 });
 
 // Só deixa reduzir: qualquer valor acima do padrão, inválido ou ausente vira o padrão.

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import type { ByteBudget } from "./body.ts";
 import { FetchError, type FetchErrorCategory, OverloadedError, toFetchError } from "./errors.ts";
 import type { Extractor } from "./extract-pool.ts";
-import type { MediaRef } from "./media.ts";
+import type { ClaimReviewMark, MediaRef } from "./media.ts";
 import { type FetcherDeps, safeFetch } from "./safe-fetch.ts";
 
 export type MediaDownload =
@@ -19,6 +19,7 @@ export type PageResult = {
   headline: string | null;
   media: MediaRef[];
   possiblyNeedsJavaScript: boolean;
+  claimReviews: ClaimReviewMark[]; // marcações declaradas pela página; a url delas nunca é buscada
   downloads: MediaDownload[];
 };
 
@@ -80,8 +81,8 @@ export async function fetchPage(rawUrl: string, deps: PageDeps, signal?: AbortSi
     const page = await safeFetch(rawUrl, "html", deps, { signal: pageSignal });
     const extracted = await deps.extract(decodeHtml(page.body, page.charset), page.finalUrl, pageSignal);
     const downloads = await downloadAll(selectedRefs(extracted.media, deps.limits.maxSelectedMedia), deps, pageSignal);
-    const { title, headline, media, possiblyNeedsJavaScript } = extracted;
-    return { finalUrl: page.finalUrl, title, headline, media, possiblyNeedsJavaScript, downloads };
+    const { title, headline, media, possiblyNeedsJavaScript, claimReviews } = extracted;
+    return { finalUrl: page.finalUrl, title, headline, media, possiblyNeedsJavaScript, claimReviews, downloads };
   } catch (error) {
     if (error instanceof OverloadedError) throw error; // vira 503 no serviço
     throw toFetchError(error, pageSignal);

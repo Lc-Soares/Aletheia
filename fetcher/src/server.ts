@@ -160,8 +160,8 @@ async function streamResult(
   const signals: StreamSignals = { request, total: AbortSignal.timeout(limits.streamTotalMs), idleMs: limits.streamIdleMs };
   res.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", ...SECURITY_HEADERS });
   try {
-    const { finalUrl, title, headline, media, possiblyNeedsJavaScript } = result;
-    await writeLine(res, { type: "page", finalUrl, title, headline, possiblyNeedsJavaScript, media }, signals);
+    const { finalUrl, title, headline, media, possiblyNeedsJavaScript, claimReviews } = result;
+    await writeLine(res, { type: "page", finalUrl, title, headline, possiblyNeedsJavaScript, claimReviews, media }, signals);
     for (const download of result.downloads) await writeLine(res, mediaLine(download), signals);
     await writeLine(res, { type: "done" }, signals);
     res.end();

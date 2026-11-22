@@ -1,14 +1,26 @@
 import { type DefaultTreeAdapterTypes, html as parse5Html, parse } from "parse5";
 
+import { type JsonLdLimits, readClaimReviews } from "./jsonld.ts";
 import { DEFAULT_LIMITS } from "./limits.ts";
-import { type ExtractedPage, MAX_TEXT_LENGTH, type MediaKind, type MediaSource } from "./media.ts";
+import { type ExtractedPage, MAX_TEXT_LENGTH, type MediaKind, type MediaSource, normalizeText } from "./media.ts";
 import { fileName, hasIconWord, isSvgName, type ListedRef, selectMedia, SIGNAL, sizeSignals } from "./select.ts";
 
 type Element = DefaultTreeAdapterTypes.Element;
 type Node = DefaultTreeAdapterTypes.Node;
 
-// maxSelectedMedia é opcional só para os testes que chamam extractPage direto; o worker sempre o recebe.
-export type ExtractLimits = { maxMediaRefs: number; maxUrlLength: number; maxHtmlNodes: number; maxSelectedMedia?: number };
+// maxSelectedMedia e os tetos de JSON-LD são opcionais só para os testes que chamam extractPage
+// direto; o worker sempre os recebe. Os tetos de JSON-LD nunca passam do padrão (jsonLdLimits).
+export type ExtractLimits = {
+  maxMediaRefs: number;
+  maxUrlLength: number;
+  maxHtmlNodes: number;
+  maxSelectedMedia?: number;
+  maxJsonLdBlocks?: number;
+  maxJsonLdBlockChars?: number;
+  maxJsonLdNodes?: number;
+  maxJsonLdDepth?: number;
+  maxClaimReviews?: number;
+};
 
 const MAX_SRCSET_LENGTH = 16 * 1024;
 const MAX_SRCSET_CANDIDATES = 20;
@@ -22,6 +34,8 @@ const VISIBLE_TEXT_THRESHOLD = 500;
 const MOUNT_IDS: ReadonlySet<string> = new Set(["root", "app", "__next", "__nuxt", "___gatsby"]);
 const HIDDEN_TEXT_PARENTS: ReadonlySet<string> = new Set(["script", "style", "noscript", "template", "title", "textarea"]);
 
+const JSON_LD_TYPE = "application/ld+json";
+
 // Teto de valores brutos por lista (og e corpo), antes de resolver e deduplicar as URLs: sem ele,
 // 100 mil nós com srcset geram milhões de entradas e de new URL. A folga cobre inválidas e repetidas.
 const RAW_REFS_PER_MEDIA_REF = 4;
@@ -33,6 +47,10 @@ type RefList = { refs: RawRef[]; seen: Map<string, RawRef>; max: number };
 // Grupos provisórios com união (union-find): a mesma URL em dois elementos une os dois grupos.
 type Groups = { parent: number[]; signals: number[] };
 
+// Texto bruto dos <script type="application/ld+json">, na ordem do documento. seen conta todos os
+// blocos vistos (inclusive os grandes demais), para o teto de blocos seguir a ordem da página.
+type JsonLdBlocks = { texts: string[]; seen: number; maxBlocks: number; maxChars: number };
+
 type Collected = {
   baseHref: string | null;
   title: string | null;
@@ -42,6 +60,7 @@ type Collected = {
   body: RefList;
   groups: Groups;
   parentGroup: Map<Element, number>; // grupo de cada <picture>/<video>, para os filhos diretos
+  jsonLd: JsonLdBlocks;
   hasScript: boolean;
   emptyMount: boolean;
   visibleChars: number;
@@ -99,13 +118,6 @@ function attr(element: Element, name: string): string | null {
 
 function isHtmlElement(node: Node): node is Element {
   return "tagName" in node && node.namespaceURI === parse5Html.NS.HTML;
-}
-
-// O corte conta unidades UTF-16 e pode partir um par surrogate; toWellFormed troca a metade solta
-// por U+FFFD (o validador do processo principal recusa texto mal formado).
-function normalizeText(text: string): string | null {
-  const normalized = text.replace(/\s+/g, " ").trim().slice(0, MAX_TEXT_LENGTH).toWellFormed();
-  return normalized === "" ? null : normalized;
 }
 
 // Texto de um elemento, iterativo e com teto, sem descer em <script>/<style>/<template>.
@@ -295,6 +307,19 @@ function collectSource(element: Element, ctx: number, found: Collected): void {
   if (srcset !== null) pushSrcset(found, srcset, "source-srcset", kind, group, svg);
 }
 
+// Junta o texto do bloco com teto: passou de maxChars, o bloco é descartado inteiro, sem parse.
+function collectJsonLd(element: Element, blocks: JsonLdBlocks): void {
+  if (lowerAttr(element, "type") !== JSON_LD_TYPE || blocks.seen >= blocks.maxBlocks) return;
+  blocks.seen++;
+  let text = "";
+  for (const child of element.childNodes) {
+    if (child.nodeName !== "#text" || !("value" in child)) continue;
+    if (text.length + child.value.length > blocks.maxChars) return;
+    text += child.value;
+  }
+  blocks.texts.push(text);
+}
+
 function noteSpaMarkers(element: Element, found: Collected): void {
   if (element.tagName === "script") found.hasScript = true;
   const id = attr(element, "id");
@@ -317,6 +342,8 @@ function collectElement(element: Element, ctx: number, found: Collected): void {
       return;
     case "meta":
       return collectMeta(element, found);
+    case "script":
+      return collectJsonLd(element, found.jsonLd);
     case "picture":
       openParentGroup(element, ctx, found);
       return;
@@ -342,7 +369,7 @@ function countVisibleText(node: Node, found: Collected): void {
 
 // Percorre a árvore com pilha explícita (sem recursão) e teto de nós. A pilha de contextos, em
 // paralelo, guarda só os bits dos ancestrais (um número por item, sem objeto).
-function walk(document: Node, limits: ExtractLimits): Collected {
+function walk(document: Node, limits: ExtractLimits, jsonLd: JsonLdLimits): Collected {
   const maxRaw = limits.maxMediaRefs * RAW_REFS_PER_MEDIA_REF;
   const found: Collected = {
     baseHref: null,
@@ -353,6 +380,7 @@ function walk(document: Node, limits: ExtractLimits): Collected {
     body: newRefList(maxRaw),
     groups: { parent: [], signals: [] },
     parentGroup: new Map(),
+    jsonLd: { texts: [], seen: 0, maxBlocks: jsonLd.maxJsonLdBlocks, maxChars: jsonLd.maxJsonLdBlockChars },
     hasScript: false,
     emptyMount: false,
     visibleChars: 0,
@@ -447,7 +475,24 @@ function listRefs(found: Collected, base: string, limits: ExtractLimits): Listed
   return listed;
 }
 
-// Extrai título, manchete e referências de mídia, agrupa as variantes e escolhe o que baixar.
+// Um valor dado só vale se for inteiro >= 1 e não passar do padrão (a regra de resolveLimits):
+// nenhum chamador afrouxa nem desliga um teto de JSON-LD.
+const capped = (value: number | undefined, fallback: number): number =>
+  typeof value === "number" && Number.isInteger(value) && value >= 1 ? Math.min(value, fallback) : fallback;
+
+function jsonLdLimits(limits: ExtractLimits): JsonLdLimits {
+  return {
+    maxJsonLdBlocks: capped(limits.maxJsonLdBlocks, DEFAULT_LIMITS.maxJsonLdBlocks),
+    maxJsonLdBlockChars: capped(limits.maxJsonLdBlockChars, DEFAULT_LIMITS.maxJsonLdBlockChars),
+    maxJsonLdNodes: capped(limits.maxJsonLdNodes, DEFAULT_LIMITS.maxJsonLdNodes),
+    maxJsonLdDepth: capped(limits.maxJsonLdDepth, DEFAULT_LIMITS.maxJsonLdDepth),
+    maxClaimReviews: capped(limits.maxClaimReviews, DEFAULT_LIMITS.maxClaimReviews),
+    maxUrlLength: limits.maxUrlLength,
+  };
+}
+
+// Extrai título, manchete, referências de mídia e marcações ClaimReview, agrupa as variantes e
+// escolhe o que baixar.
 // Não executa script nem busca nada: as URLs devolvidas são tão hostis quanto a do usuário e
 // passam por safeFetch antes de baixar.
 export function extractPage(
@@ -455,12 +500,14 @@ export function extractPage(
   pageUrl: string,
   limits: ExtractLimits = DEFAULT_LIMITS,
 ): ExtractedPage {
-  const found = walk(parse(htmlText), limits);
+  const jsonLd = jsonLdLimits(limits);
+  const found = walk(parse(htmlText), limits, jsonLd);
   const listed = listRefs(found, resolveBase(found.baseHref, pageUrl), limits);
   for (const ref of listed) ref.root = findGroup(found.groups, ref.root);
   const maxSelected = limits.maxSelectedMedia ?? DEFAULT_LIMITS.maxSelectedMedia;
   const media = selectMedia(listed, (root) => found.groups.signals[root] ?? 0, maxSelected);
   const possiblyNeedsJavaScript =
     media.length === 0 && found.visibleChars < VISIBLE_TEXT_THRESHOLD && (found.hasScript || found.emptyMount);
-  return { title: found.title, headline: found.ogTitle ?? found.h1, media, possiblyNeedsJavaScript };
+  const claimReviews = readClaimReviews(found.jsonLd.texts, jsonLd);
+  return { title: found.title, headline: found.ogTitle ?? found.h1, media, possiblyNeedsJavaScript, claimReviews };
 }

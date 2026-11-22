@@ -317,7 +317,7 @@ describe("hash de domínio nos logs (HMAC com chave do processo)", () => {
 
 describe("serviço do fetcher: teto de requisições em andamento", () => {
   const MIB = 1024 * 1024;
-  const emptyResult = { finalUrl: "https://noticias.example/", title: null, headline: null, media: [], possiblyNeedsJavaScript: false, downloads: [] };
+  const emptyResult = { finalUrl: "https://noticias.example/", title: null, headline: null, media: [], possiblyNeedsJavaScript: false, claimReviews: [], downloads: [] };
 
   test("acima do limite, as excedentes recebem 503 rápido e a memória não cresce", { timeout: 30_000 }, async () => {
     let calls = 0;
@@ -417,7 +417,7 @@ describe("serviço do fetcher: prazos de escrita da resposta", () => {
     sha256: "0".repeat(64),
     bytes,
   });
-  const page = { finalUrl: "https://noticias.example/", title: "t", headline: null, media: [], possiblyNeedsJavaScript: false };
+  const page = { finalUrl: "https://noticias.example/", title: "t", headline: null, media: [], possiblyNeedsJavaScript: false, claimReviews: [] };
   const big = { ...page, downloads: [1, 2, 3, 4].map(download) };
   const small = { ...page, downloads: [] };
   const bigOrSmall: PageFetcher = async (url) => (url.endsWith("/grande") ? big : small);
@@ -517,6 +517,7 @@ describe("serviço do fetcher: log de respostas que não terminam", () => {
     headline: null,
     media: [],
     possiblyNeedsJavaScript: false,
+    claimReviews: [],
     downloads: [1, 2, 3, 4].map((i) => ({
       url: `https://cdn.example/${i}.jpg`,
       kind: "image" as const,
