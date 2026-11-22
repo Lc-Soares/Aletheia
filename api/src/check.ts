@@ -1,11 +1,14 @@
 // POST /api/check: autentica, confere a capacidade da instância, valida o corpo, consome o limite
-// do plano, chama o fetcher e manda cada mídia baixada à ExifTools. Responde um único JSON no fim,
-// com sinais e nunca veredito.
+// do plano, chama o fetcher e manda cada mídia baixada à ExifTools. Assim que a linha page chega,
+// busca checagens publicadas pela manchete (Fact Check Tools), em paralelo. Responde um único JSON
+// no fim, com sinais e nunca veredito.
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { type Analysis, analyzeDownloads, type MetadataView } from "./analyze.ts";
 import type { TokenVerifier } from "./auth.ts";
 import type { ExtractCall } from "./exiftools-client.ts";
+import type { FactCheckCall } from "./factcheck-client.ts";
+import { createFactCheckSearch, type FactCheckOutcome } from "./factcheck-search.ts";
 import type { DownloadResult, FetchedPage } from "./fetcher-contract.ts";
 import type { FetcherCall, FetcherOutcome } from "./fetcher-client.ts";
 import { authenticate, domainHash, HttpError, sendJson } from "./http.ts";
@@ -16,6 +19,7 @@ import { type RateLimiter, userKey } from "./rate-limit.ts";
 export type CheckDeps = {
   callFetcher: FetcherCall;
   extract: ExtractCall;
+  searchFactChecks: FactCheckCall;
   limiter: RateLimiter;
   maxInFlightChecks: number;
   totalDeadlineMs?: number; // só reduz o padrão (testes)
@@ -27,6 +31,7 @@ export type CheckLogFields = {
   mediaCount?: number;
   analyzedCount?: number;
   exif?: Record<string, number>;
+  factCheck?: Record<string, number>;
 };
 
 // Cada checagem pode segurar cerca de 110 MiB (docs/api.md); acima disso, 503.
@@ -81,7 +86,7 @@ function downloadView(download: DownloadResult | undefined): Record<string, unkn
 
 // Todas as mídias listadas, com a seleção, o resultado do download e, para as baixadas, a análise
 // de metadados. Os bytes nunca saem daqui.
-function buildReport(page: FetchedPage, metadata: Map<string, MetadataView>): Record<string, unknown> {
+function buildReport(page: FetchedPage, metadata: Map<string, MetadataView>, factCheck: FactCheckOutcome): Record<string, unknown> {
   const downloads = new Map(page.downloads.map((download) => [download.url, download]));
   const { finalUrl, title, headline, possiblyNeedsJavaScript, claimReviews } = page;
   const notices: string[] = [NOTICES.selection, NOTICES.c2paRevocation, NOTICES.c2paSigner];
@@ -96,14 +101,23 @@ function buildReport(page: FetchedPage, metadata: Map<string, MetadataView>): Re
       metadata: metadata.get(ref.url) ?? null,
     })),
     notices,
+    // factCheck: checagens que terceiros publicaram sobre afirmações parecidas com a manchete;
+    // quem exibe cita o publicador e o rótulo dele, nunca como conclusão nossa.
+    factCheck: factCheck.view,
   };
 }
 
 // A categoria exata vai só para o log; o usuário vê a mensagem unificada.
-function respondReport(res: ServerResponse, page: FetchedPage, analysis: Analysis, note: (fields: CheckLogFields) => void): void {
+function respondReport(
+  res: ServerResponse,
+  page: FetchedPage,
+  analysis: Analysis,
+  factCheck: FactCheckOutcome,
+  note: (fields: CheckLogFields) => void,
+): void {
   const mediaCount = page.downloads.filter((download) => download.ok).length;
-  note({ outcome: "ok", mediaCount, analyzedCount: analysis.analyzed, exif: analysis.tally });
-  sendJson(res, 200, buildReport(page, analysis.views));
+  note({ outcome: "ok", mediaCount, analyzedCount: analysis.analyzed, exif: analysis.tally, factCheck: factCheck.tally });
+  sendJson(res, 200, buildReport(page, analysis.views, factCheck));
 }
 
 // Uma falha da fase do fetcher: a categoria exata vai só para o log.
@@ -170,17 +184,27 @@ export async function handleCheck(
     }
     const controller = new AbortController();
     res.on("close", () => controller.abort()); // quem chamou desistiu: para o fetcher
-    const outcome = await deps.callFetcher(url, controller.signal);
+    // A busca de checagens começa quando a linha page chega e é abortada ao fim da checagem: se o
+    // fetcher falhar depois, o texto já pode ter sido enviado, mas o resultado é descartado.
+    const stopSearch = new AbortController();
+    const factCheck = createFactCheckSearch(deps.searchFactChecks, { signal: AbortSignal.any([controller.signal, stopSearch.signal]), deadlineAt });
     try {
-      if (outcome.kind !== "page") {
-        if (outcome.kind === "busy") admission.release(); // nada foi buscado no alvo; a falta de vaga é nossa
-        return respondFailure(res, outcome, note);
+      const outcome = await deps.callFetcher(url, controller.signal, factCheck.start);
+      try {
+        if (outcome.kind !== "page") {
+          if (outcome.kind === "busy") admission.release(); // nada foi buscado no alvo; a falta de vaga é nossa
+          return respondFailure(res, outcome, note);
+        }
+        factCheck.start(outcome.page); // sem efeito se o aviso da linha page já veio
+        const analysis = await analyze(outcome.page, plan, deps, controller.signal, deadlineAt);
+        const found = await factCheck.result(); // limitada pelo prazo da busca e pelo prazo total
+        if (controller.signal.aborted) return void res.destroy(); // quem chamou já foi embora
+        respondReport(res, outcome.page, analysis, found, note);
+      } finally {
+        discard(outcome);
       }
-      const analysis = await analyze(outcome.page, plan, deps, controller.signal, deadlineAt);
-      if (controller.signal.aborted) return void res.destroy(); // quem chamou já foi embora
-      respondReport(res, outcome.page, analysis, note);
     } finally {
-      discard(outcome);
+      stopSearch.abort();
     }
   } finally {
     state.inFlight--;

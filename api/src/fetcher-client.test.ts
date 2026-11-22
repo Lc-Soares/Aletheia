@@ -183,6 +183,50 @@ describe("cliente do fetcher: marcações ClaimReview", () => {
   }
 });
 
+describe("cliente do fetcher: aviso da linha page (onPage)", () => {
+  async function runWithPage(handler: FakeFetcherHandler, onPage: (page: { title: string | null; headline: string | null }) => void): Promise<FetcherOutcome> {
+    const fake = await startFakeFetcher(handler);
+    try {
+      const call = createFetcherClient({ fetcherUrl: fake.url, token: () => Promise.resolve(TEST_SERVICE_TOKEN), limits: FAST });
+      return await call(PAGE_URL, new AbortController().signal, onPage);
+    } finally {
+      await fake.close();
+    }
+  }
+
+  test("avisa uma vez, com título e manchete, assim que a linha page chega (antes do fim do stream)", async () => {
+    let seen = (): void => {};
+    const pageSeen = new Promise<void>((resolve) => (seen = resolve));
+    const calls: unknown[] = [];
+    const handler: FakeFetcherHandler = async (_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+      res.write(ndjson([pageLine()]));
+      await pageSeen; // o resto só sai depois do aviso: sem ele, o stream nunca termina
+      res.end(ndjson([mediaLine(CAPA_REF, CAPA_BYTES), mediaErrorLine(FOTO_REF, "blocked"), DONE_LINE]));
+    };
+    const outcome = await runWithPage(handler, (page) => {
+      calls.push(page);
+      seen();
+    });
+    assert.equal(outcome.kind, "page");
+    assert.deepEqual(calls, [{ title: "Matéria de exemplo", headline: "Manchete inventada" }]);
+  });
+
+  test("onPage que lança não atrapalha a leitura", async () => {
+    const outcome = await runWithPage(respond(standardStream()), () => {
+      throw new Error("falha de quem ouve");
+    });
+    assert.equal(outcome.kind, "page");
+  });
+
+  test("linha page malformada: nenhum aviso", async () => {
+    let calls = 0;
+    const outcome = await runWithPage(respond(ndjson([pageLine({ title: 1 }), DONE_LINE])), () => calls++);
+    assertMalformed(outcome, "page malformada");
+    assert.equal(calls, 0);
+  });
+});
+
 describe("cliente do fetcher: 503 e novas tentativas", () => {
   test("tenta de novo depois de 503 com Retry-After e segue quando o fetcher libera", async () => {
     let calls = 0;

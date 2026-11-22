@@ -3,7 +3,7 @@
 // localização e autoria saem só como booleano, nunca com valores. O nome do arquivo não leva o domínio.
 
 import { groupMedia } from "./report-model.js";
-import { CLAIM_REVIEW_TEXT, FIXED_NOTICE, IGNORED_TEXT, lookup } from "./report-text.js";
+import { CLAIM_REVIEW_TEXT, FACT_CHECK_TEXT, FIXED_NOTICE, IGNORED_TEXT, lookup } from "./report-text.js";
 import { sanitizeText } from "./sanitize.js";
 
 export const SCHEMA_VERSION = 1;
@@ -12,6 +12,9 @@ const REVOKE_DELAY_MS = 1_000;
 /** @typedef {import("./report-parse.js").Report} Report */
 /** @typedef {import("./report-parse.js").Signals} Signals */
 /** @typedef {import("./report-parse.js").C2pa} C2pa */
+
+/** @param {Report} report */
+const hasFactChecks = (report) => report.factCheck?.status === "ok" && report.factCheck.claims.length > 0;
 
 /** @param {C2pa} c2pa */
 function c2paJson(c2pa) {
@@ -62,9 +65,11 @@ export function buildReportJson({ report, analyzedUrl, now }) {
     schemaVersion: SCHEMA_VERSION,
     generatedAt: now.toISOString(),
     analyzedUrl: sanitizeText(analyzedUrl, 2048),
-    // Com marcação ClaimReview, o arquivo leva o mesmo aviso da tela: não indica que a checagem esteja correta.
-    notices: [FIXED_NOTICE, ...(report.page.claimReviews.length > 0 ? [CLAIM_REVIEW_TEXT.notice] : []), ...report.notices],
+    // Com marcação ClaimReview ou checagens publicadas, o arquivo leva os mesmos avisos da tela.
+    notices: [FIXED_NOTICE, ...(report.page.claimReviews.length > 0 ? [CLAIM_REVIEW_TEXT.notice] : []), ...(hasFactChecks(report) ? [FACT_CHECK_TEXT.notice] : []), ...report.notices],
     page: { ...report.page },
+    // Campo aditivo: null quando a API não mandou (versão anterior). schemaVersion continua 1.
+    factCheck: report.factCheck,
     mediaGroups: groupMedia(report.media).map(({ position, representative, variantCount }) => {
       const reason = representative.skipReason;
       return {

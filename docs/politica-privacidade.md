@@ -49,7 +49,7 @@ Compartilhamos dados apenas com os fornecedores que executam partes da análise,
 | Google (Firebase Hosting, Cloud Run, Google Identity) | Hospedagem da plataforma e login | Dados da sua conta usados no login, IP e dados técnicos da requisição | \[CONFIRMAR PAÍSES E REGIÃO\] |
 | Google Cloud Vision | Busca reversa de imagens | Imagem extraída da página | \[CONFIRMAR\] |
 | Google Web Risk | Verificar se o link é malicioso | Endereço da página | \[CONFIRMAR\] |
-| Google Fact Check Tools | Buscar checagens já publicadas | Texto da afirmação extraído da página | \[CONFIRMAR\] |
+| Google Fact Check Tools | Buscar checagens já publicadas | Manchete da página (ou, sem ela, o título), como texto de busca | \[CONFIRMAR\] |
 | ExifTools | Leitura de metadados e verificação de assinaturas de autenticidade (C2PA) | O arquivo da mídia (nunca o endereço) | \[CONFIRMAR PAÍS\] |
 | Site analisado | Origem do conteúdo | Nosso servidor acessa a página que você informou, e o site pode registrar esse acesso | Conforme o próprio site |
 

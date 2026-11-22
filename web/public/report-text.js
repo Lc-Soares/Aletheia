@@ -62,6 +62,32 @@ export const CLAIM_REVIEW_TEXT = {
   url: "Endereço da checagem (declarado)",
 };
 
+/**
+ * Checagens publicadas por terceiros (Google Fact Check Tools), achadas pela manchete da página.
+ * O rótulo é do publicador e sai entre aspas, com o nome dele e o link: citação, nunca conclusão.
+ */
+export const FACT_CHECK_TEXT = {
+  heading: "Checagens publicadas sobre afirmações parecidas (Google Fact Check Tools)",
+  searchedFor: "Buscamos por:",
+  sent: "Esse texto foi enviado ao Google Fact Check Tools.",
+  notice:
+    "Estas checagens foram publicadas por terceiros sobre afirmações parecidas com a manchete. Parecido não significa que seja a mesma afirmação, e o Aletheia não conclui nada.",
+  empty:
+    "Nenhuma checagem encontrada para esse texto. Isso não diz nada sobre a matéria: a busca depende das palavras usadas e só cobre checagens que o Google indexou.",
+  unavailable: "Não foi possível consultar as checagens agora.",
+  skipped: "Não buscamos checagens: a página não tem manchete nem título.",
+  notConfigured: "A busca de checagens não está ativa neste ambiente.",
+  claim: "Afirmação checada (segundo o publicador)",
+  claimant: "Quem afirmou (segundo o publicador)",
+  claimDate: "Data da afirmação",
+  publisher: "Publicado por",
+  rating: "Avaliação do publicador",
+  title: "Título da checagem",
+  reviewDate: "Data da checagem",
+  language: "Idioma da checagem",
+  url: "Endereço da checagem",
+};
+
 /** Tags de data da lista permitida da API (docs/api.md, "Lista permitida de sinais"). */
 export const DATE_LABELS = {
   "EXIF:DateTimeOriginal": "Data original da captura (EXIF)",

@@ -28,7 +28,14 @@ Lista única do que falta, atualizada em **22/11/2026**, após o deploy da Fase 
   - 5a. ClaimReview em JSON-LD na própria página (sem chave). **Implementada** (`docs/fetcher.md`, "ClaimReview"). Falta:
     - testar com uma página real que tenha ClaimReview (só foi testado com fixtures a partir dos exemplos da página oficial);
     - A URL da checagem declarada é um link para site de terceiro, que pode apontar para phishing; a proteção real vem com o Web Risk (5c).
-  - 5b. Fact Check Tools (`claims.search`), com chave de API restrita a essa API. **Decidir antes de onde vem o texto da afirmação** (a página? o título?);
+  - 5b. Fact Check Tools (`claims.search`), com chave de API restrita a essa API. O texto da busca é a manchete da página, ou o título sem ela (decidido em 22/11/2026). **Implementada** (`docs/api.md`, "Fact Check Tools"). Falta:
+    - criar o segredo `factcheck-api-key` e implantar a API (`docs/deploy.md`, "Fase 5b"); o passo a passo ainda será escrito;
+    - conferir no primeiro deploy que a chave no cabeçalho `X-Goog-Api-Key` é aceita: a página do Fact Check não documenta a autenticação, e o cabeçalho vem da documentação geral do Google Cloud. `http_403` no campo `factCheck` do log indica chave recusada ou API desativada;
+    - cota vista no console em 22/11/2026: 300 requisições por minuto (AllRequests per minute, projeto inteiro). A tela não mostra limite diário nem preço; o preço segue sem confirmação oficial;
+    - a API é v1alpha1 (alfa) e pode mudar sem aviso; campos desconhecidos já são ignorados;
+    - falsos casamentos da manchete ainda não medidos: a busca devolve afirmações parecidas, que podem não ser a mesma;
+    - linha `FACTCHECK_API_KEY=` no `api/.env.example`, a cargo do desenvolvedor.
+  - 5b-2. `imageSearch` (checagens por imagem), depois da 5b. A própria documentação avisa: "You should not depend on externally-hosted images for production applications." Além disso, o `imageUri` faria o Google buscar a imagem por conta própria (fora do fetcher), o que precisa de decisão de privacidade antes;
   - 5c. Web Risk, com conta de serviço e faturamento. **Ler os termos de uso comercial/sem fins lucrativos antes**;
   - 5d. Cloud Vision (Web Detection), pago. **Definir cota e alerta de orçamento antes.**
 - **Fase 6:** lançamento limitado (`docs/arquitetura.md`, plano de fases).

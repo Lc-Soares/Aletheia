@@ -4,7 +4,15 @@ export type Config = {
   fetcherUrl: string;
   fetcherAudience: string;
   exifToolsApiKey: string; // segredo: nunca logar nem repetir em mensagem de erro
+  // Opcional (segredo): sem ela, a busca no Fact Check Tools fica "not_configured" e a checagem
+  // segue normal. Assim a API sobe antes de o segredo existir, e roda local e em testes sem chave.
+  factCheckApiKey: string | null;
 };
+
+function optional(env: Record<string, string | undefined>, name: string): string | null {
+  const value = env[name]?.trim();
+  return value ? value : null;
+}
 
 function required(env: Record<string, string | undefined>, name: string): string {
   const value = env[name]?.trim();
@@ -44,5 +52,6 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
   const fetcherAudience = required(env, "FETCHER_AUDIENCE");
   checkServiceUrl(fetcherAudience, "FETCHER_AUDIENCE");
   const exifToolsApiKey = required(env, "EXIFTOOLS_API_KEY");
-  return { googleClientId, port, fetcherUrl: fetcherUrl.href, fetcherAudience, exifToolsApiKey };
+  const factCheckApiKey = optional(env, "FACTCHECK_API_KEY");
+  return { googleClientId, port, fetcherUrl: fetcherUrl.href, fetcherAudience, exifToolsApiKey, factCheckApiKey };
 }

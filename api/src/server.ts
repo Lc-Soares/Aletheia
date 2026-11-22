@@ -16,6 +16,7 @@ export type LogEntry = {
   mediaCount: number | null; // mídias baixadas
   analyzedCount: number | null; // mídias com sinais da ExifTools
   exif: Record<string, number> | null; // contagem por status da ExifTools (ok, unavailable, config_error...)
+  factCheck: Record<string, number> | null; // contagem por status da busca no Fact Check Tools; nunca o texto
 };
 
 export type ApiOptions = { verifier: TokenVerifier; log: (entry: LogEntry) => void; check: CheckDeps };
@@ -77,6 +78,7 @@ export function createApiServer(options: ApiOptions): Server {
         mediaCount: entry.mediaCount ?? null,
         analyzedCount: entry.analyzedCount ?? null,
         exif: entry.exif ?? null,
+        factCheck: entry.factCheck ?? null,
       });
     };
     res.on("finish", () => writeLog(res.statusCode, entry.outcome ?? "-"));

@@ -2,7 +2,7 @@
 
 Serviço Node.js no Cloud Run, atrás do Firebase Hosting (`/api/**`). Valida o login, aplica o limite do plano, chama o fetcher e devolve o relatório. É stateless: nada vai para disco ou banco, e os bytes das mídias só existem na memória durante a requisição.
 
-Fase 4 (4a, 4b e 4c): `POST /api/check` devolve a página, as mídias e, para cada mídia baixada, os sinais de metadados extraídos pela ExifTools (lista permitida). Fase 5a: também as marcações ClaimReview que a página declara. Nunca há veredito de verdadeiro ou falso. A resposta é um único JSON no fim; o envio por SSE fica para depois.
+Fase 4 (4a, 4b e 4c): `POST /api/check` devolve a página, as mídias e, para cada mídia baixada, os sinais de metadados extraídos pela ExifTools (lista permitida). Fase 5a: também as marcações ClaimReview que a página declara. Fase 5b: também as checagens que terceiros publicaram sobre afirmações parecidas com a manchete (Google Fact Check Tools). Nunca há veredito de verdadeiro ou falso. A resposta é um único JSON no fim; o envio por SSE fica para depois.
 
 ## Rotas
 
@@ -33,7 +33,8 @@ Ordem de processamento (`api/src/check.ts`):
 3. lê e valida o corpo (um corpo inválido não gasta cota);
 4. consome o limite do plano;
 5. chama o fetcher;
-6. manda cada mídia baixada à ExifTools (ver "Sinais por mídia").
+6. assim que a linha `page` chega, busca checagens publicadas pela manchete, em paralelo (ver "Fact Check Tools");
+7. manda cada mídia baixada à ExifTools (ver "Sinais por mídia").
 
 ### Resposta 200
 
@@ -59,7 +60,11 @@ Ordem de processamento (`api/src/check.ts`):
     "A seleção de mídias é automática e heurística; ...",
     "A revogação de certificados C2PA não é verificada online.",
     "Um signatário confiável indica quem gerou o arquivo, não que o conteúdo seja verdadeiro."
-  ]
+  ],
+  "factCheck": { "status": "ok", "query": "<manchete enviada>",
+    "claims": [{ "text": "...", "claimant": "...", "claimDate": "2014-10-02T15:01:23Z",
+      "reviews": [{ "publisherName": "...", "publisherSite": "...", "url": "https://...", "title": "...",
+        "reviewDate": "2014-10-02T15:01:23Z", "textualRating": "...", "languageCode": "en" }] }] }
 }
 ```
 
@@ -70,6 +75,7 @@ Ordem de processamento (`api/src/check.ts`):
 - `metadata` é `null` para as mídias não selecionadas e para as que falharam no download. Para as baixadas, ver "Sinais por mídia".
 - `notices` sempre traz o aviso de seleção heurística e os dois avisos fixos de C2PA. Quando `possiblyNeedsJavaScript` é verdadeiro, traz também o aviso de que a página possivelmente depende de JavaScript. O sinal é uma possibilidade, nunca um fato.
 - `page.claimReviews` traz as marcações ClaimReview que a própria página declarou, como o fetcher entregou (até 5; lista vazia quando não há). Ver "Marcação ClaimReview".
+- `factCheck` (Fase 5b, campo aditivo) traz o resultado da busca no Google Fact Check Tools. Ver "Fact Check Tools".
 
 ### Marcação ClaimReview
 
@@ -242,6 +248,55 @@ Confirmado com um JPEG sintético de metadados conhecidos:
 - **Não informados:** a retenção real, a região de processamento e o SLA.
 - **Geocodificação:** a resposta real inclui `address` e `addressPlusCode`, derivados do GPS. A API descarta os dois (ver "Nunca saem"), mas não sabemos se a ExifTools usa um terceiro para geocodificar. É pendência de revisão jurídica (`docs/arquitetura.md`).
 
+## Fact Check Tools
+
+Fase 5b. `api/src/factcheck-client.ts`, `api/src/factcheck-response.ts` e `api/src/factcheck-search.ts`. Documentação: `docs/apis/fact-check.md` e as páginas oficiais de `claims.search` e do recurso Claim (lidas em 22/11/2026).
+
+### Texto da busca
+
+- **Origem:** a manchete da página (`headline`, que o fetcher já extrai). Sem ela, ou se ficar vazia depois da limpeza, o título. O usuário não digita nada, e a marcação ClaimReview da 5a não é usada.
+- **Limpeza:** caracteres de controle viram espaço; bidi, largura zero e surrogate solto saem; os espaços são colapsados; o texto é cortado em 200 pontos de código, sem partir surrogate.
+- **Sem texto:** status `skipped`, sem chamar o Google.
+- **Sem filtro de idioma** (`languageCode`): o fetcher não extrai o idioma da página, e um filtro esconderia checagens em outras línguas sobre a mesma afirmação. Cada checagem traz o próprio `languageCode`, e a interface mostra.
+- **Quando:** a busca começa assim que a linha `page` do fetcher chega (aviso `onPage` do cliente do fetcher), em paralelo com os downloads e a ExifTools.
+  - **A manchete pode já ter sido enviada ao Google mesmo que o fetcher falhe depois.** Nesse caso a checagem responde com o erro do fetcher, a busca é abortada, e o aborto só descarta o resultado.
+  - Se o usuário fechar a conexão, a busca também é abortada.
+- **Prazo:** 5 s por chamada, desde o início da busca, e nunca além do prazo total da checagem (50 s). A resposta espera a busca no máximo até esse prazo; um erro rápido do Google não atrasa nada.
+
+### Cliente
+
+- **Endereço fixo:** `GET https://factchecktools.googleapis.com/v1alpha1/claims:search`, com corpo vazio e só os parâmetros `query` e `pageSize=10`, montados com `URLSearchParams` (acentos, `&`, `#` e espaços vão codificados). Sem variável de ambiente para trocar o destino. A URL da página nunca é enviada.
+- **Chave só no cabeçalho `X-Goog-Api-Key`**, nunca em `?key=`. O cabeçalho está nos parâmetros de sistema das APIs do Google Cloud, e a página de chaves avisa que a chave na URL fica exposta. A página do Fact Check não documenta a autenticação; o uso real do cabeçalho será confirmado no primeiro deploy (`docs/pendencias.md`).
+  - A chave vem de `FACTCHECK_API_KEY`, **opcional**: sem ela, o status é `not_configured`, nenhuma requisição é feita e a checagem segue normal.
+  - A chave nunca aparece em log, resultado ou mensagem de erro.
+- **Redirecionamento:** não é seguido (`redirect: "manual"`), porque a chave iria junto.
+- **Resposta:** até 512 KiB, com a mesma leitura com teto da ExifTools.
+- **Sem nova tentativa:** é uma chamada por checagem, com prazo curto. 429 é cota, e insistir não resolve; tentar de novo depois de 5xx ou timeout só esticaria a espera.
+- **Nunca lança:** toda falha vira um status, e o erro original (que pode citar a URL, e com ela o texto da busca) é descartado.
+
+### Campo `factCheck`
+
+| `status` | Quando | `query` | `claims` |
+| --- | --- | --- | --- |
+| `ok` | o Google respondeu no formato | texto enviado | até 10 afirmações (lista vazia quando não há) |
+| `unavailable` | qualquer falha: 400, 403, 429, 5xx, outro status, redirecionamento, timeout, rede, resposta fora do formato ou grande demais | texto enviado | vazia |
+| `skipped` | página sem manchete nem título | `null` | vazia |
+| `not_configured` | sem `FACTCHECK_API_KEY` | `null` | vazia |
+
+Cada afirmação: `text`, `claimant` e `claimDate`, e `reviews` com até 5 checagens: `publisherName`, `publisherSite`, `url`, `title`, `reviewDate`, `textualRating` e `languageCode`. São os campos de Claim, ClaimReview e Publisher da documentação oficial, com nomes nossos.
+
+**Validação** (lista permitida; nada do Google é repassado sem cópia campo a campo; só propriedade própria é lida):
+- Corpo que não é JSON, raiz que não é objeto ou `claims` que não é lista: a resposta inteira é descartada (`unavailable`). Sem `claims` (o Google manda `{}` quando não acha nada): `ok` com lista vazia. O `nextPageToken` é ignorado: só a primeira página.
+- **Campo desconhecido é ignorado, nunca repassado** (a API é alfa e pode ganhar campos sem aviso).
+- Campo com tipo errado vira `null`. Textos: espaços colapsados, até 300 (253 no site), sempre bem formados. Datas só em RFC 3339 UTC, como a documentação descreve. Idioma só como código BCP-47 de até 35.
+- `url`: só http(s) absoluta, sem usuário e senha, de até 2048, guardada na forma normalizada; senão `null`. **Nunca é buscada.**
+- Revisão sem `url`, `title` e `textualRating` é descartada; afirmação sem nenhuma revisão válida também. Item que não é objeto é descartado.
+- Tetos de 10 afirmações e 5 revisões por afirmação; só os primeiros 50 itens de cada lista são lidos. A ordem é a do Google.
+
+**Linguagem.** `textualRating` é o rótulo que o **publicador** escreveu (por exemplo "Mostly false"). A interface mostra a seção com "Buscamos por: «…»", a linha "Esse texto foi enviado ao Google Fact Check Tools." e o aviso fixo "Estas checagens foram publicadas por terceiros sobre afirmações parecidas com a manchete. Parecido não significa que seja a mesma afirmação, e o Aletheia não conclui nada.". O rótulo sai entre aspas, com o publicador e o link. Sem contagem, sem nota e sem ordenação por rótulo; fica fora do resumo de sinais. Sem checagens, a tela diz que isso não diz nada sobre a matéria.
+
+**Compatibilidade.** O campo é aditivo: a web anterior o ignora, e a web nova sem o campo (API anterior) não mostra a seção. O fetcher não muda.
+
 ## Limite por usuário (plano gratuito)
 
 `api/src/plans.ts` e `api/src/rate-limit.ts`.
@@ -274,16 +329,19 @@ Confirmado com um JPEG sintético de metadados conhecidos:
 | `FETCHER_URL` | sim | URL do serviço do fetcher. https, ou `http://localhost` em desenvolvimento; sem usuário/senha, query ou fragmento |
 | `FETCHER_AUDIENCE` | sim | `aud` do ID token de serviço; igual ao `FETCHER_AUDIENCE` do fetcher. Mesma regra de esquema |
 | `EXIFTOOLS_API_KEY` | sim | chave da ExifTools. Em produção, vem do Secret Manager; nunca vai para código, log ou commit |
+| `FACTCHECK_API_KEY` | não | chave do Google Fact Check Tools (segredo `factcheck-api-key`). Sem ela, a busca de checagens fica `not_configured` e a checagem segue normal. Mesmas regras de segredo |
 
 Os erros de configuração nomeiam a variável e nunca repetem o valor.
 
 ## Logs
 
-Uma linha JSON por requisição: `method`, `route` (normalizada), `status`, `durationMs`, `outcome`, `domainHash`, `mediaCount` (mídias baixadas), `analyzedCount` (mídias com sinais) e `exif` (contagem por status da ExifTools: `ok`, `unavailable`, `unsupported`, `too_large`, `invalid`, `config_error`, `not_analyzed`, `skipped`).
+Uma linha JSON por requisição: `method`, `route` (normalizada), `status`, `durationMs`, `outcome`, `domainHash`, `mediaCount` (mídias baixadas), `analyzedCount` (mídias com sinais), `exif` (contagem por status da ExifTools: `ok`, `unavailable`, `unsupported`, `too_large`, `invalid`, `config_error`, `not_analyzed`, `skipped`) e `factCheck` (contagem por status da busca no Fact Check Tools: `ok`, `skipped`, `not_configured` ou a categoria da falha, `http_400`, `http_403`, `http_429`, `http_5xx`, `http_other`, `timeout`, `network`, `invalid`, `too_large`, `aborted`; só nas respostas 200).
+
+`http_403` em `factCheck` indica chave recusada ou API desativada no projeto: precisa de ação, como o `config_error` da ExifTools.
 
 `config_error` em `exif` significa que a ExifTools recusou a chave: é erro de configuração nosso e precisa de ação.
 
-- **Nunca aparecem:** URL, caminho, corpo, token, e-mail, `sub`, chave da ExifTools nem bytes.
+- **Nunca aparecem:** URL, caminho, corpo, token, e-mail, `sub`, chaves da ExifTools e do Fact Check, o texto enviado na busca, nada das checagens devolvidas, nem bytes.
 - **`domainHash`:** HMAC-SHA-256 truncado do hostname, com chave aleatória do processo, igual ao do fetcher.
 - **`outcome`:** inclui a categoria interna exata, que nunca vai para o usuário. "Observado" marca os valores vistos no teste real de 24/10/2026; os demais vêm do código e ainda não apareceram num teste manual.
 

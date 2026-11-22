@@ -13,6 +13,7 @@ import {
   C2PA_STATE_LABELS,
   CLAIM_REVIEW_TEXT,
   DATE_LABELS,
+  FACT_CHECK_TEXT,
   FIXED_NOTICE,
   IGNORED_NOTE,
   IGNORED_TEXT,
@@ -35,6 +36,9 @@ import { isSafeHttpUrl } from "./safe-url.js";
 /** @typedef {import("./report-parse.js").Signals} Signals */
 /** @typedef {import("./report-parse.js").C2pa} C2pa */
 /** @typedef {import("./report-parse.js").ClaimReview} ClaimReview */
+/** @typedef {import("./report-parse.js").FactCheck} FactCheck */
+/** @typedef {import("./report-parse.js").FactCheckClaim} FactCheckClaim */
+/** @typedef {import("./report-parse.js").FactCheckReview} FactCheckReview */
 
 const LINK_REL = "noopener noreferrer nofollow";
 
@@ -160,6 +164,82 @@ function claimReviewSection(page) {
         ...(marks.length >= MAX_CLAIM_REVIEWS ? [textNode("p", CLAIM_REVIEW_TEXT.limit, C.note)] : []),
         facts(row(CLAIM_REVIEW_TEXT.source, claimSource(page.finalUrl))),
         ...marks.map(claimReviewBlock),
+      ],
+    }),
+  ];
+}
+
+/** Nome e site do publicador, como o Google informou. @param {FactCheckReview} review @returns {string | null} */
+function factCheckPublisher(review) {
+  const { publisherName: name, publisherSite: site } = review;
+  if (name !== null && site !== null) return `${name} (${site})`;
+  return name ?? site;
+}
+
+/** Uma checagem publicada: o rótulo é do publicador e sai entre aspas, como citação. */
+/** @param {FactCheckReview} review @param {number} index @returns {Descriptor[]} */
+function factCheckReviewBlock(review, index) {
+  return [
+    textNode("p", `Checagem ${index + 1}`, C.note),
+    facts([
+      ...rowOrNotInformed(FACT_CHECK_TEXT.publisher, factCheckPublisher(review)),
+      ...rowOrNotInformed(FACT_CHECK_TEXT.rating, review.textualRating === null ? null : `“${review.textualRating}”`),
+      ...rowOrNotInformed(FACT_CHECK_TEXT.title, review.title),
+      ...rowOrNotInformed(FACT_CHECK_TEXT.reviewDate, review.reviewDate),
+      ...rowOrNotInformed(FACT_CHECK_TEXT.language, review.languageCode),
+      ...row(FACT_CHECK_TEXT.url, review.url === null ? TEXT.notInformed : urlValue(review.url)),
+    ]),
+  ];
+}
+
+/** @param {FactCheckClaim} claim @param {number} index @returns {Descriptor} */
+function factCheckClaimBlock(claim, index) {
+  return node("section", {
+    attrs: { class: C.mediaGroup },
+    children: [
+      textNode("h4", `Afirmação ${index + 1}`),
+      facts([
+        ...rowOrNotInformed(FACT_CHECK_TEXT.claim, claim.text),
+        ...rowOrNotInformed(FACT_CHECK_TEXT.claimant, claim.claimant),
+        ...rowOrNotInformed(FACT_CHECK_TEXT.claimDate, claim.claimDate),
+      ]),
+      ...claim.reviews.flatMap(factCheckReviewBlock),
+    ],
+  });
+}
+
+/** Texto de quando não há checagens para mostrar. @param {FactCheck} factCheck @returns {string} */
+function factCheckStatusText(factCheck) {
+  if (factCheck.status === "ok") return FACT_CHECK_TEXT.empty;
+  if (factCheck.status === "skipped") return FACT_CHECK_TEXT.skipped;
+  if (factCheck.status === "not_configured") return FACT_CHECK_TEXT.notConfigured;
+  return FACT_CHECK_TEXT.unavailable;
+}
+
+/**
+ * Checagens que terceiros publicaram sobre afirmações parecidas com a manchete. Mostra sempre o
+ * texto enviado ao Google, na ordem que o Google devolveu (sem ordenar por rótulo). Fica fora do
+ * resumo de sinais, como a marcação ClaimReview. Sem o campo (API anterior), nada aparece.
+ * @param {FactCheck | null} factCheck
+ * @returns {Descriptor[]}
+ */
+function factCheckSection(factCheck) {
+  if (factCheck === null) return [];
+  const sent = factCheck.query !== null && (factCheck.status === "ok" || factCheck.status === "unavailable");
+  const found = factCheck.status === "ok" && factCheck.claims.length > 0;
+  return [
+    node("section", {
+      attrs: { class: C.section },
+      children: [
+        textNode("h3", FACT_CHECK_TEXT.heading),
+        ...(sent
+          ? [
+              textNode("p", `${FACT_CHECK_TEXT.searchedFor} «${factCheck.query}»`),
+              textNode("p", FACT_CHECK_TEXT.sent, C.note),
+              textNode("p", FACT_CHECK_TEXT.notice, C.fixedNotice),
+            ]
+          : []),
+        ...(found ? factCheck.claims.map(factCheckClaimBlock) : [textNode("p", factCheckStatusText(factCheck), C.note)]),
       ],
     }),
   ];
@@ -306,6 +386,7 @@ export function describeReport(report) {
       ...summarySection(report),
       pageSection(report.page),
       ...claimReviewSection(report.page),
+      ...factCheckSection(report.factCheck),
       mediaSection(report),
     ],
   });
