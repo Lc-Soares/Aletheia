@@ -87,9 +87,8 @@ Fase 5a. O fetcher lê o JSON-LD da página (`docs/fetcher.md`, "ClaimReview") e
 - **Linguagem:** é o que a página declarou, nunca conclusão do Aletheia. A interface mostra a seção só quando há marcação, com o aviso fixo "A página se apresenta como uma checagem. Isso não indica que a checagem esteja correta.", a fonte (domínio e endereço da página) e o rótulo entre aspas. A seção fica fora do resumo de sinais. A ausência da marcação não diz nada e não é exibida.
 - **Não sai:** `itemReviewed` (autor, data e aparições da afirmação), `publisher` (que a página oficial não lista em ClaimReview), `author.url`, `sameAs`, imagens e qualquer outro campo.
 - **Logs:** nada da marcação vai para o log nem para `notices`.
-- **Transição do contrato (temporária).** A API aceita a linha `page` do fetcher **com ou sem** `claimReviews`. Sem o campo, que é o fetcher anterior à Fase 5a, a lista fica vazia.
-  - Ordem segura de implantação: **API primeiro, fetcher depois.** A API anterior exige as chaves exatas da linha `page` e recusaria o campo novo (502 em toda checagem).
-  - Depois que os dois estiverem no ar, o campo passa a ser obrigatório (`PAGE_KEYS_BEFORE_CLAIM_REVIEWS` em `api/src/fetcher-contract.ts`; pendência em `docs/pendencias.md`).
+- **Contrato:** `claimReviews` é **obrigatório** na linha `page` do fetcher, como lista (vazia quando a página não declara marcação). Uma linha `page` sem o campo é resposta malformada, e a API devolve o 502 genérico. Um fetcher anterior à Fase 5a não é mais compatível.
+  - Histórico: o deploy de 22/11/2026 usou uma transição temporária, em que a API aceitava a linha com ou sem o campo. Por isso a ordem foi API primeiro, fetcher depois (`docs/deploy.md`, "Atualização de 22/11/2026").
 
 ### Sinais por mídia
 
@@ -146,7 +145,7 @@ O 504 vale para qualquer prazo esgotado antes da linha `done`, inclusive quando 
   - Content-Type `application/x-ndjson`;
   - uma linha `page`, um resultado por mídia selecionada, sem repetir, e `done`;
   - campos com os tipos e valores conhecidos;
-  - `claimReviews` com até 5 marcações, chaves exatas, textos bem formados dentro do teto, números finitos e `url` http(s) normalizada sem usuário e senha (ausente só na transição, ver "Marcação ClaimReview");
+  - `claimReviews` com até 5 marcações, chaves exatas, textos bem formados dentro do teto, números finitos e `url` http(s) normalizada sem usuário e senha (obrigatório, ver "Marcação ClaimReview");
   - content-type da mídia na lista do fetcher;
   - o base64 é decodificado linha a linha, e o tamanho e o SHA-256 são conferidos.
 
