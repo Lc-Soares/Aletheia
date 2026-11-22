@@ -53,7 +53,7 @@ Uma verificação é uma única requisição, do login ao descarte dos dados. Na
 3. A API valida o token (assinatura, audiência, expiração, e-mail verificado) e aplica o limite de uso.
 4. A API repassa a URL ao fetcher, um serviço privado que só aceita a conta de serviço da API. O fetcher valida a URL: apenas http e https, portas 80 e 443, resolve o DNS uma vez e bloqueia endereços privados, de loopback e link-local (inclusive o servidor de metadados do Google Cloud). A validação se repete a cada redirecionamento.
 5. O fetcher baixa o HTML em memória, com limite de tamanho e de tempo.
-6. O fetcher extrai do HTML as mídias (img, srcset, video, source, og:image, og:video) e o título ou manchete. A leitura de ClaimReview em JSON-LD entra na Fase 5.
+6. O fetcher extrai do HTML as mídias (img, srcset, video, source, og:image, og:video), o título ou manchete e as marcações ClaimReview em JSON-LD que a própria página declara (Fase 5a, `docs/fetcher.md`, "ClaimReview"). A marcação mostra que a página se apresenta como checagem, não que a checagem esteja correta.
 7. Cada mídia é baixada uma única vez pelo fetcher, com as mesmas validações da URL do usuário, limite de tamanho e lista de tipos permitidos, e o SHA-256 é calculado. Detalhes, limites e regras de implantação em `docs/fetcher.md`.
 8. As checagens rodam em paralelo: ExifTools (EXIF e C2PA), Cloud Vision (Web Detection), Web Risk (reputação da URL) e Fact Check (busca da afirmação extraída).
 9. O agregador junta os sinais e envia o resultado ao navegador. Na Fase 4, a resposta é um único JSON no fim da verificação (`docs/api.md`). O envio de cada resultado por SSE, assim que fica pronto, fica como melhoria futura opcional.
@@ -74,7 +74,7 @@ Cinco serviços externos alimentam o relatório; todas as chaves ficam no Secret
 | Web Risk | Reputação da URL (malware, phishing) | URL; devolve ameaças conhecidas | A Safe Browsing gratuita é restrita a uso não comercial; confirmar os termos antes de escolher. |
 | Google Identity Services | Login | ID token JWT | O cliente OAuth deve listar apenas a origem exata do front-end. O MFA depende do que o usuário ativou na conta Google. |
 
-A leitura de ClaimReview em JSON-LD da própria página é feita localmente e não depende de API.
+A leitura de ClaimReview em JSON-LD da própria página é feita localmente e não depende de API (Fase 5a). Ela roda no worker de extração do fetcher, com os mesmos limites de heap e prazo e tetos próprios em `limits.ts`. A url da checagem declarada nunca é buscada. A interface a mostra como citação de terceiro, com a fonte, fora do resumo de sinais.
 
 **Estados C2PA no relatório.** O campo state da ExifTools pode ser trusted, trusted\_legacy, valid, invalid, remote, unchecked ou error. O relatório mostra o estado e o signatário com o texto da própria API e uma nota fixa: um signatário confiável diz quem fez o arquivo, não que o conteúdo é verdadeiro.
 
@@ -170,6 +170,6 @@ A implementação segue sete fases, e cada uma só termina quando seus testes pa
 2. **Esqueleto seguro.** API no Cloud Run que valida o ID token do Google; front mínimo com login, cabeçalhos e CSP. Pronto quando um usuário logado chama uma rota protegida e um token inválido é recusado.
 3. **Fetcher seguro.** Validação de URL, proteção contra SSRF, extração de mídias, limites de tamanho e tempo. Pronto quando toda a bateria de testes de SSRF passa.
 4. **ExifTools e relatório.** Integração EXIF e C2PA, agregador de sinais e relatório em resposta JSON única (entregue na Fase 4; SSE como melhoria futura opcional). Pronto quando uma página real gera um relatório completo.
-5. **Demais checagens, uma por vez.** ClaimReview local, Fact Check, Web Risk e Cloud Vision, cada uma com sua chave, cota e alerta. Pronto quando cada plugin tem testes com respostas simuladas.
+5. **Demais checagens, uma por vez.** ClaimReview local (5a, feita), Fact Check, Web Risk e Cloud Vision, cada uma com sua chave, cota e alerta. Pronto quando cada plugin tem testes com respostas simuladas.
 6. **Lançamento limitado.** PDF, política de privacidade e termos publicados, revisão jurídica, teste dos limites de uso e do custo por verificação. Pronto quando o advogado aprova e o custo por verificação está dentro do orçamento.
 7. **Opcional.** Relatório assinado, análise de PDF e Office, plano B com ExifTool auto-hospedado.

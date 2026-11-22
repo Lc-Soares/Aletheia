@@ -6,10 +6,12 @@
 
 import { C, IDS } from "./report-classes.js";
 import { groupMedia } from "./report-model.js";
+import { MAX_CLAIM_REVIEWS } from "./report-parse.js";
 import { summarizeSignals } from "./report-summary.js";
 import {
   C2PA_REASON_LABELS,
   C2PA_STATE_LABELS,
+  CLAIM_REVIEW_TEXT,
   DATE_LABELS,
   FIXED_NOTICE,
   IGNORED_NOTE,
@@ -32,6 +34,7 @@ import { isSafeHttpUrl } from "./safe-url.js";
 /** @typedef {import("./report-parse.js").MediaItem} MediaItem */
 /** @typedef {import("./report-parse.js").Signals} Signals */
 /** @typedef {import("./report-parse.js").C2pa} C2pa */
+/** @typedef {import("./report-parse.js").ClaimReview} ClaimReview */
 
 const LINK_REL = "noopener noreferrer nofollow";
 
@@ -70,12 +73,20 @@ function urlTextNode(text) {
   return textNode("span", text, C.mono);
 }
 
+/**
+ * Link só para http(s) sem usuário e senha; o texto do link é sempre o próprio endereço, nunca um
+ * rótulo vindo da página. Fora disso, o endereço fica como texto.
+ * @param {string} url
+ * @returns {Descriptor}
+ */
+function urlValue(url) {
+  if (!isSafeHttpUrl(url)) return urlTextNode(url);
+  return node("a", { text: url, attrs: { class: C.link, href: url, rel: LINK_REL, target: "_blank" } });
+}
+
 /** @param {string | null} url @returns {Descriptor[]} */
 function finalUrlRow(url) {
-  if (url === null) return row("Endereço final", TEXT.notInformed);
-  if (!isSafeHttpUrl(url)) return row("Endereço final", urlTextNode(url));
-  const link = node("a", { text: url, attrs: { class: C.link, href: url, rel: LINK_REL, target: "_blank" } });
-  return row("Endereço final", link);
+  return row("Endereço final", url === null ? TEXT.notInformed : urlValue(url));
 }
 
 /** @param {Report["page"]} page @returns {Descriptor} */
@@ -87,6 +98,71 @@ function pageSection(page) {
       facts([...rowOrNotInformed("Título", page.title), ...rowOrNotInformed("Manchete", page.headline), ...finalUrlRow(page.finalUrl)]),
     ],
   });
+}
+
+/**
+ * Fonte da marcação: o domínio e o endereço da página que a declarou.
+ * @param {string | null} finalUrl
+ * @returns {string | Descriptor}
+ */
+function claimSource(finalUrl) {
+  if (finalUrl === null) return TEXT.notInformed;
+  if (!isSafeHttpUrl(finalUrl)) return urlTextNode(finalUrl);
+  const host = new URL(finalUrl).hostname;
+  return node("span", { children: [textNode("span", `${host} (`), urlValue(finalUrl), textNode("span", ")")] });
+}
+
+/** @param {ClaimReview} mark @returns {string | null} */
+function claimScore(mark) {
+  if (mark.ratingValue === null) return null;
+  const scale = mark.worstRating !== null && mark.bestRating !== null ? ` (escala de ${mark.worstRating} a ${mark.bestRating})` : "";
+  return `${mark.ratingValue}${scale}`;
+}
+
+/** Uma marcação: tudo é o que a página declarou; o rótulo sai entre aspas, como citação. */
+/** @param {ClaimReview} mark @param {number} index @returns {Descriptor} */
+function claimReviewBlock(mark, index) {
+  const score = claimScore(mark);
+  return node("section", {
+    attrs: { class: C.mediaGroup },
+    children: [
+      textNode("h4", `Marcação ${index + 1}`),
+      facts([
+        ...rowOrNotInformed(CLAIM_REVIEW_TEXT.claim, mark.claimReviewed),
+        ...rowOrNotInformed(CLAIM_REVIEW_TEXT.rating, mark.ratingLabel === null ? null : `“${mark.ratingLabel}”`),
+        ...(score === null ? [] : row(CLAIM_REVIEW_TEXT.score, score)),
+        ...rowOrNotInformed(CLAIM_REVIEW_TEXT.author, mark.authorName),
+        ...rowOrNotInformed(CLAIM_REVIEW_TEXT.date, mark.datePublished),
+        ...row(CLAIM_REVIEW_TEXT.url, mark.url === null ? TEXT.notInformed : urlValue(mark.url)),
+      ]),
+    ],
+  });
+}
+
+/**
+ * Marcações ClaimReview declaradas pela página. Sem marcação, nada aparece: a ausência não diz nada.
+ * Fica fora do resumo de sinais, para o rótulo nunca parecer conclusão do Aletheia.
+ * @param {Report["page"]} page
+ * @returns {Descriptor[]}
+ */
+function claimReviewSection(page) {
+  const marks = page.claimReviews;
+  if (marks.length === 0) return [];
+  const count = marks.length === 1 ? "1 marcação ClaimReview encontrada." : `${marks.length} marcações ClaimReview encontradas.`;
+  return [
+    node("section", {
+      attrs: { class: C.section },
+      children: [
+        textNode("h3", CLAIM_REVIEW_TEXT.heading),
+        textNode("p", CLAIM_REVIEW_TEXT.notice, C.fixedNotice),
+        textNode("p", CLAIM_REVIEW_TEXT.explanation, C.note),
+        textNode("p", count),
+        ...(marks.length >= MAX_CLAIM_REVIEWS ? [textNode("p", CLAIM_REVIEW_TEXT.limit, C.note)] : []),
+        facts(row(CLAIM_REVIEW_TEXT.source, claimSource(page.finalUrl))),
+        ...marks.map(claimReviewBlock),
+      ],
+    }),
+  ];
 }
 
 /** @param {string[]} notices @returns {Descriptor} */
@@ -229,6 +305,7 @@ export function describeReport(report) {
       noticesSection(report.notices),
       ...summarySection(report),
       pageSection(report.page),
+      ...claimReviewSection(report.page),
       mediaSection(report),
     ],
   });

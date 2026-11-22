@@ -240,7 +240,7 @@ describe("extractPage: HTML hostil", () => {
   });
 
   test("entrada vazia", () => {
-    assert.deepEqual(extractPage("", PAGE), { title: null, headline: null, media: [], possiblyNeedsJavaScript: false });
+    assert.deepEqual(extractPage("", PAGE), { title: null, headline: null, media: [], possiblyNeedsJavaScript: false, claimReviews: [] });
   });
 
   test("srcset terminado em vírgulas: tempo linear, sem ReDoS", () => {

@@ -3,7 +3,7 @@
 // localização e autoria saem só como booleano, nunca com valores. O nome do arquivo não leva o domínio.
 
 import { groupMedia } from "./report-model.js";
-import { FIXED_NOTICE, IGNORED_TEXT, lookup } from "./report-text.js";
+import { CLAIM_REVIEW_TEXT, FIXED_NOTICE, IGNORED_TEXT, lookup } from "./report-text.js";
 import { sanitizeText } from "./sanitize.js";
 
 export const SCHEMA_VERSION = 1;
@@ -62,7 +62,8 @@ export function buildReportJson({ report, analyzedUrl, now }) {
     schemaVersion: SCHEMA_VERSION,
     generatedAt: now.toISOString(),
     analyzedUrl: sanitizeText(analyzedUrl, 2048),
-    notices: [FIXED_NOTICE, ...report.notices],
+    // Com marcação ClaimReview, o arquivo leva o mesmo aviso da tela: não indica que a checagem esteja correta.
+    notices: [FIXED_NOTICE, ...(report.page.claimReviews.length > 0 ? [CLAIM_REVIEW_TEXT.notice] : []), ...report.notices],
     page: { ...report.page },
     mediaGroups: groupMedia(report.media).map(({ position, representative, variantCount }) => {
       const reason = representative.skipReason;

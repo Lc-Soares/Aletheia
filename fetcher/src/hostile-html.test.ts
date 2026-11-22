@@ -8,7 +8,7 @@ import { fetchPage, type PageDeps } from "./fetch-page.ts";
 import { isPublicAddress } from "./ip-policy.ts";
 import { resolveLimits } from "./limits.ts";
 import { createFetcherServer, shutdown } from "./server.ts";
-import { fakeResolver, formattingBomb, html, orphanEndTags, routeTransport, srcsetCommas } from "./testing.ts";
+import { fakeResolver, formattingBomb, html, ldScript, orphanEndTags, routeTransport, srcsetCommas } from "./testing.ts";
 
 // Páginas da revisão de segurança da Fase 3 (achados 1, 2 e 3), de ponta a ponta pelo serviço.
 // Prazos generosos: o que se testa é "erro controlado em segundos", não "minutos ou queda".
@@ -107,6 +107,31 @@ describe("HTML hostil de ponta a ponta (revisão da Fase 3)", () => {
 
   test("achado 3: srcset com vírgulas termina dentro do prazo, e a instância segue respondendo", { timeout: 60_000 }, async (t) => {
     const observed = await attack(srcsetCommas());
+    assert.equal(observed.status, 200);
+    assertResponsive(observed, t);
+  });
+});
+
+// JSON-LD hostil (Fase 5a): cada página fica abaixo dos 2 MiB de HTML, para chegar ao worker.
+const HTML_BUDGET = Math.floor(1.9 * 1024 * 1024);
+const fill = (block: string): string => block.repeat(Math.floor(HTML_BUDGET / block.length));
+
+describe("JSON-LD hostil de ponta a ponta (ClaimReview)", () => {
+  test("script JSON-LD gigante (1,9 MiB) é ignorado sem parse, e a instância segue respondendo", { timeout: 60_000 }, async (t) => {
+    const prefix = '{"@type":"ClaimReview","claimReviewed":"x","pad":"';
+    const observed = await attack(ldScript(`${prefix}${"a".repeat(HTML_BUDGET - prefix.length - 60)}"}`));
+    assert.equal(observed.status, 200);
+    assertResponsive(observed, t);
+  });
+
+  test("milhares de blocos JSON-LD: só os primeiros são lidos, dentro do prazo", { timeout: 60_000 }, async (t) => {
+    const observed = await attack(fill(ldScript('{"@type":"ClaimReview","claimReviewed":"repetida"}')));
+    assert.equal(observed.status, 200);
+    assertResponsive(observed, t);
+  });
+
+  test("aninhamento profundo em vários blocos é recusado pela pré-varredura, dentro do prazo", { timeout: 60_000 }, async (t) => {
+    const observed = await attack(fill(ldScript("[".repeat(250_000))));
     assert.equal(observed.status, 200);
     assertResponsive(observed, t);
   });

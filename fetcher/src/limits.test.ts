@@ -27,6 +27,17 @@ describe("resolveLimits", () => {
     });
   }
 
+  test("tetos de JSON-LD (ClaimReview): valores padrão, só reduzíveis", () => {
+    assert.deepEqual(
+      [DEFAULT_LIMITS.maxJsonLdBlocks, DEFAULT_LIMITS.maxJsonLdBlockChars, DEFAULT_LIMITS.maxJsonLdNodes, DEFAULT_LIMITS.maxJsonLdDepth, DEFAULT_LIMITS.maxClaimReviews],
+      [20, 256 * 1024, 2_000, 16, 5],
+    );
+    const raised = resolveLimits({ maxJsonLdBlocks: 1e6, maxJsonLdBlockChars: 1e9, maxJsonLdNodes: 1e9, maxJsonLdDepth: 1e4, maxClaimReviews: 1e3 });
+    assert.deepEqual(raised, DEFAULT_LIMITS);
+    assert.equal(resolveLimits({ maxJsonLdDepth: 4 }).maxJsonLdDepth, 4);
+    assert.equal(resolveLimits({ maxClaimReviews: 0 }).maxClaimReviews, DEFAULT_LIMITS.maxClaimReviews);
+  });
+
   test("os padrões são imutáveis", () => {
     assert.throws(() => {
       (DEFAULT_LIMITS as { maxRedirects: number }).maxRedirects = 50;

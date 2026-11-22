@@ -12,7 +12,7 @@ import { fetchPage } from "./fetch-page.ts";
 import { isPublicAddress } from "./ip-policy.ts";
 import { type Limits, resolveLimits } from "./limits.ts";
 import { createFetcherServer, domainHash, type LogEntry, type PageFetcher, shutdown } from "./server.ts";
-import { fakeResolver, html, image, routeTransport } from "./testing.ts";
+import { fakeResolver, html, image, ldScript, OFFICIAL_CLAIMREVIEW, OFFICIAL_CLAIMREVIEW_MARK, routeTransport } from "./testing.ts";
 
 const GOOD_TOKEN = "good.token.value";
 const verifier: CallerVerifier = async (token) => {
@@ -26,6 +26,7 @@ const transport = routeTransport({
     `<title>Título</title><img src="/a.jpg"><img src="http://169.254.169.254/x.jpg">`,
   ),
   "https://noticias.example/a.jpg": image("JPEG-BYTES"),
+  "https://noticias.example/checagem": html(`<title>Checagem</title>${ldScript(OFFICIAL_CLAIMREVIEW)}`),
 });
 const realFetcher: PageFetcher = (url, signal) =>
   fetchPage(url, {
@@ -132,6 +133,15 @@ describe("serviço do fetcher", () => {
     assert.equal(media["sha256"], createHash("sha256").update("JPEG-BYTES").digest("hex"));
     assert.equal(media["contentType"], "image/jpeg");
     assert.equal(lines[2]?.["error"], "blocked");
+    assert.deepEqual(lines[0]?.["claimReviews"], []);
+  });
+
+  test("linha page leva as marcações ClaimReview da página", async () => {
+    const res = await post(s.base, { url: "https://noticias.example/checagem" });
+    assert.equal(res.status, 200);
+    const lines = (await res.text()).trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    assert.deepEqual(lines.map((l) => l["type"]), ["page", "done"]);
+    assert.deepEqual(lines[0]?.["claimReviews"], [OFFICIAL_CLAIMREVIEW_MARK]);
   });
 
   test("a URL na query string é ignorada; só vale a do corpo", async () => {
@@ -307,7 +317,7 @@ describe("hash de domínio nos logs (HMAC com chave do processo)", () => {
 
 describe("serviço do fetcher: teto de requisições em andamento", () => {
   const MIB = 1024 * 1024;
-  const emptyResult = { finalUrl: "https://noticias.example/", title: null, headline: null, media: [], possiblyNeedsJavaScript: false, downloads: [] };
+  const emptyResult = { finalUrl: "https://noticias.example/", title: null, headline: null, media: [], possiblyNeedsJavaScript: false, claimReviews: [], downloads: [] };
 
   test("acima do limite, as excedentes recebem 503 rápido e a memória não cresce", { timeout: 30_000 }, async () => {
     let calls = 0;
@@ -407,7 +417,7 @@ describe("serviço do fetcher: prazos de escrita da resposta", () => {
     sha256: "0".repeat(64),
     bytes,
   });
-  const page = { finalUrl: "https://noticias.example/", title: "t", headline: null, media: [], possiblyNeedsJavaScript: false };
+  const page = { finalUrl: "https://noticias.example/", title: "t", headline: null, media: [], possiblyNeedsJavaScript: false, claimReviews: [] };
   const big = { ...page, downloads: [1, 2, 3, 4].map(download) };
   const small = { ...page, downloads: [] };
   const bigOrSmall: PageFetcher = async (url) => (url.endsWith("/grande") ? big : small);
@@ -507,6 +517,7 @@ describe("serviço do fetcher: log de respostas que não terminam", () => {
     headline: null,
     media: [],
     possiblyNeedsJavaScript: false,
+    claimReviews: [],
     downloads: [1, 2, 3, 4].map((i) => ({
       url: `https://cdn.example/${i}.jpg`,
       kind: "image" as const,

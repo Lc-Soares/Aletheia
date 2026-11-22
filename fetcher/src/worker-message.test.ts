@@ -4,7 +4,7 @@ import { describe, test } from "node:test";
 import { FetchError } from "./errors.ts";
 import { validateWorkerPage } from "./worker-message.ts";
 
-const LIMITS = { maxMediaRefs: 2, maxUrlLength: 40, maxSelectedMedia: 2 };
+const LIMITS = { maxMediaRefs: 2, maxUrlLength: 40, maxSelectedMedia: 2, maxClaimReviews: 2 };
 const ref = (overrides: Record<string, unknown> = {}) => ({
   url: "https://cdn.example/a.jpg",
   kind: "image",
@@ -20,8 +20,22 @@ const page = (overrides: Record<string, unknown> = {}) => ({
   headline: null,
   media: [ref()],
   possiblyNeedsJavaScript: false,
+  claimReviews: [],
   ...overrides,
 });
+// Marcação ClaimReview completa (url dentro de maxUrlLength).
+const mark = (overrides: Record<string, unknown> = {}) => ({
+  claimReviewed: "A Terra é plana",
+  ratingLabel: "Falso",
+  ratingValue: 1,
+  bestRating: 5,
+  worstRating: 1,
+  url: "https://checagem.example/a",
+  authorName: "Agência",
+  datePublished: "2024-06-22",
+  ...overrides,
+});
+const withMark = (overrides: Record<string, unknown>) => page({ claimReviews: [mark(overrides)] });
 // Mídia de outro grupo, e variante do grupo 1.
 const other = (overrides: Record<string, unknown> = {}) => ref({ url: "https://cdn.example/b.jpg", group: 2, ...overrides });
 const variant = (overrides: Record<string, unknown> = {}) =>
@@ -57,6 +71,7 @@ describe("validateWorkerPage", () => {
     ["array", [page()]],
     ["chave a mais", { ...page(), extra: 1 }],
     ["chave faltando", { title: null, headline: null }],
+    ["claimReviews ausente (o worker sempre envia)", { title: null, headline: null, media: [], possiblyNeedsJavaScript: false }],
     ["title número", page({ title: 1 })],
     ["title acima de 300", page({ title: "t".repeat(301) })],
     ["headline objeto", page({ headline: { toString: "x" } })],
@@ -104,6 +119,27 @@ describe("validateWorkerPage", () => {
     ["grupo só com variantes", page({ media: [variant()] })],
     ["tipos misturados no grupo", page({ media: [ref(), variant({ kind: "video", source: "video" })] })],
     ["pontuações diferentes no grupo", page({ media: [ref(), variant({ score: 5 })] })],
+    // Marcações ClaimReview.
+    ["claimReviews null", page({ claimReviews: null })],
+    ["claimReviews objeto", page({ claimReviews: { length: 0 } })],
+    ["claimReviews acima de maxClaimReviews", page({ claimReviews: [mark(), mark(), mark()] })],
+    ["claimReviews esparso", page({ claimReviews: new Array(1) })],
+    ["marcação null", page({ claimReviews: [null] })],
+    ["marcação com chave a mais", page({ claimReviews: [{ ...mark(), itemReviewed: "x" }] })],
+    ["marcação sem uma chave", page({ claimReviews: [{ claimReviewed: "x" }] })],
+    ["claimReviewed acima de 300", withMark({ claimReviewed: "a".repeat(301) })],
+    ["ratingLabel com surrogate solto", withMark({ ratingLabel: "\uD83DFalso" })],
+    ["authorName número", withMark({ authorName: 1 })],
+    ["datePublished acima de 64", withMark({ datePublished: "2".repeat(65) })],
+    ["ratingValue texto", withMark({ ratingValue: "1" })],
+    ["ratingValue NaN", withMark({ ratingValue: Number.NaN })],
+    ["bestRating Infinity", withMark({ bestRating: Number.POSITIVE_INFINITY })],
+    ["worstRating -Infinity", withMark({ worstRating: Number.NEGATIVE_INFINITY })],
+    ["url javascript:", withMark({ url: "javascript:alert(1)" })],
+    ["url não normalizada", withMark({ url: "HTTPS://Checagem.example/a" })],
+    ["url com usuário e senha", withMark({ url: "https://u:p@x.example/" })],
+    ["url acima de maxUrlLength", withMark({ url: `https://x.example/${"a".repeat(40)}` })],
+    ["url relativa", withMark({ url: "/checagem" })],
   ];
 
   test("grupo com representante e variante passa; todos os motivos conhecidos passam", () => {
@@ -134,6 +170,14 @@ describe("validateWorkerPage", () => {
     const url = "http://u:p@10.0.0.1:22/x";
     assert.equal(new URL(url).href, url);
     assert.equal(validateWorkerPage(page({ media: [ref({ url })] }), LIMITS).media[0]?.url, url);
+  });
+
+  test("marcações ClaimReview válidas voltam iguais, em objetos novos; campos null passam", () => {
+    const empty = { claimReviewed: null, ratingLabel: null, ratingValue: null, bestRating: null, worstRating: null, url: null, authorName: null, datePublished: null };
+    const message = page({ claimReviews: [mark({ claimReviewed: "t".repeat(300), datePublished: "d".repeat(64), ratingValue: -0.5 }), empty] });
+    const result = validateWorkerPage(message, LIMITS);
+    assert.deepEqual(result, message);
+    assert.notEqual(result.claimReviews[0], message.claimReviews[0]);
   });
 
   test("texto com par surrogate completo passa", () => {

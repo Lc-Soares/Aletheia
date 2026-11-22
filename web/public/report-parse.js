@@ -12,7 +12,11 @@ const MAX_DATES = 10;
 const MAX_SOFTWARE = 10;
 const MAX_CHECKS = 50;
 const MAX_DIMENSION = 100_000;
-const LIMITS = { url: 2048, title: 300, headline: 300, notice: 500, message: 300, short: 64, software: 128, code: 128 };
+/** Teto de marcações ClaimReview (o mesmo do servidor). A tela avisa quando chega nele. */
+export const MAX_CLAIM_REVIEWS = 5;
+// Folga para itens que não são objeto: a lista nunca é percorrida inteira.
+const MAX_CLAIM_REVIEW_ITEMS = 50;
+const LIMITS = { url: 2048, title: 300, headline: 300, notice: 500, message: 300, short: 64, software: 128, code: 128, claim: 300, date: 64 };
 
 const SKIP_REASONS = ["variant", "icon", "unsupported_format", "low_score", "limit", "other"];
 const FAILED_METADATA = ["unavailable", "unsupported", "too_large", "error", "not_analyzed"];
@@ -61,14 +65,35 @@ const FAILED_METADATA = ["unavailable", "unsupported", "too_large", "error", "no
  */
 
 /**
+ * Marcação ClaimReview que a página declarou (docs/api.md). É texto de terceiro: a tela cita, com a
+ * fonte, e nunca trata como conclusão.
+ * @typedef {object} ClaimReview
+ * @property {string | null} claimReviewed
+ * @property {string | null} ratingLabel
+ * @property {number | null} ratingValue
+ * @property {number | null} bestRating
+ * @property {number | null} worstRating
+ * @property {string | null} url
+ * @property {string | null} authorName
+ * @property {string | null} datePublished
+ */
+
+/**
  * @typedef {object} Report
- * @property {{ finalUrl: string | null, title: string | null, headline: string | null }} page
+ * @property {{ finalUrl: string | null, title: string | null, headline: string | null, claimReviews: ClaimReview[] }} page
  * @property {string[]} notices
  * @property {MediaItem[]} media
  */
 
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
 const isObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** Só propriedade própria: nada vem do protótipo (nem por "__proto__" ou "constructor"). */
+/** @param {Record<string, unknown>} value @param {string} key @returns {unknown} */
+const own = (value, key) => (Object.hasOwn(value, key) ? value[key] : undefined);
+
+/** @param {unknown} value @returns {number | null} */
+const finiteNumber = (value) => (typeof value === "number" && Number.isFinite(value) ? value : null);
 
 /** @param {unknown} value @returns {boolean | null} */
 const bool = (value) => (typeof value === "boolean" ? value : null);
@@ -201,6 +226,33 @@ function mediaItem(raw, index) {
   };
 }
 
+/** Só os campos conhecidos, lidos como propriedade própria. @param {Record<string, unknown>} raw @returns {ClaimReview} */
+function claimReview(raw) {
+  return {
+    claimReviewed: sanitizeText(own(raw, "claimReviewed"), LIMITS.claim),
+    ratingLabel: sanitizeText(own(raw, "ratingLabel"), LIMITS.claim),
+    ratingValue: finiteNumber(own(raw, "ratingValue")),
+    bestRating: finiteNumber(own(raw, "bestRating")),
+    worstRating: finiteNumber(own(raw, "worstRating")),
+    url: sanitizeText(own(raw, "url"), LIMITS.url),
+    authorName: sanitizeText(own(raw, "authorName"), LIMITS.claim),
+    datePublished: sanitizeText(own(raw, "datePublished"), LIMITS.date),
+  };
+}
+
+/** Ausente ou de tipo errado: lista vazia (a ausência não é exibida). @param {Record<string, unknown>} page @returns {ClaimReview[]} */
+function claimReviews(page) {
+  const value = own(page, "claimReviews");
+  if (!Array.isArray(value)) return [];
+  /** @type {ClaimReview[]} */
+  const found = [];
+  for (const item of value.slice(0, MAX_CLAIM_REVIEW_ITEMS)) {
+    if (isObject(item)) found.push(claimReview(item));
+    if (found.length >= MAX_CLAIM_REVIEWS) break;
+  }
+  return found;
+}
+
 /**
  * @param {unknown} json Corpo da resposta 200, como veio do servidor.
  * @returns {Report | null} null quando fora do formato.
@@ -219,6 +271,7 @@ export function parseReport(json) {
       finalUrl: sanitizeText(page["finalUrl"], LIMITS.url),
       title: sanitizeText(page["title"], LIMITS.title),
       headline: sanitizeText(page["headline"], LIMITS.headline),
+      claimReviews: claimReviews(page),
     },
     notices: textList(json["notices"], MAX_NOTICES, LIMITS.notice),
     media,

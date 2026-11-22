@@ -1,7 +1,10 @@
 import { FetchError } from "./errors.ts";
 import type { Limits } from "./limits.ts";
 import {
+  CLAIM_REVIEW_KEYS,
+  type ClaimReviewMark,
   type ExtractedPage,
+  MAX_DATE_LENGTH,
   MAX_SCORE,
   MAX_TEXT_LENGTH,
   MEDIA_KINDS,
@@ -16,11 +19,11 @@ import {
 const KINDS: ReadonlySet<unknown> = new Set(MEDIA_KINDS);
 const SOURCES: ReadonlySet<unknown> = new Set(MEDIA_SOURCES);
 const REASONS: ReadonlySet<unknown> = new Set(SKIP_REASONS);
-const PAGE_KEYS = ["headline", "media", "possiblyNeedsJavaScript", "title"];
+const PAGE_KEYS = ["claimReviews", "headline", "media", "possiblyNeedsJavaScript", "title"];
 const REF_KEYS = ["group", "kind", "score", "selected", "skipReason", "source", "url"];
 
 type PlainObject = Record<string, unknown>;
-type ValidationLimits = Pick<Limits, "maxMediaRefs" | "maxUrlLength" | "maxSelectedMedia">;
+type ValidationLimits = Pick<Limits, "maxMediaRefs" | "maxUrlLength" | "maxSelectedMedia" | "maxClaimReviews">;
 
 function isPlainObject(value: unknown): value is PlainObject {
   return typeof value === "object" && value !== null && Object.getPrototypeOf(value) === Object.prototype;
@@ -31,8 +34,10 @@ function hasExactKeys(value: PlainObject, keys: readonly string[]): boolean {
   return own.length === keys.length && own.every((key, i) => key === keys[i]);
 }
 
-const isText = (value: unknown): value is string | null =>
-  value === null || (typeof value === "string" && value.length <= MAX_TEXT_LENGTH && value.isWellFormed());
+const isText = (value: unknown, max: number = MAX_TEXT_LENGTH): value is string | null =>
+  value === null || (typeof value === "string" && value.length <= max && value.isWellFormed());
+
+const isFiniteOrNull = (value: unknown): value is number | null => value === null || (typeof value === "number" && Number.isFinite(value));
 
 const isIntegerIn = (value: unknown, min: number, max: number): value is number =>
   typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
@@ -47,6 +52,33 @@ function isHttpUrl(value: unknown, maxLength: number): value is string {
   } catch {
     return false;
   }
+}
+
+// url da checagem: além de http(s) normalizada, sem usuário e senha (o worker nunca as envia).
+function isReviewUrl(value: unknown, maxLength: number): value is string | null {
+  if (value === null) return true;
+  if (!isHttpUrl(value, maxLength)) return false;
+  const { username, password } = new URL(value);
+  return username === "" && password === "";
+}
+
+function toClaimReview(value: unknown, maxUrlLength: number): ClaimReviewMark {
+  if (!isPlainObject(value) || !hasExactKeys(value, CLAIM_REVIEW_KEYS)) throw new FetchError("network");
+  const { claimReviewed, ratingLabel, ratingValue, bestRating, worstRating, url, authorName, datePublished } = value;
+  if (!isText(claimReviewed) || !isText(ratingLabel) || !isText(authorName) || !isText(datePublished, MAX_DATE_LENGTH)) {
+    throw new FetchError("network");
+  }
+  if (!isFiniteOrNull(ratingValue) || !isFiniteOrNull(bestRating) || !isFiniteOrNull(worstRating)) throw new FetchError("network");
+  if (!isReviewUrl(url, maxUrlLength)) throw new FetchError("network");
+  return { claimReviewed, ratingLabel, ratingValue, bestRating, worstRating, url, authorName, datePublished };
+}
+
+// Laço por índice: buracos de array esparso viram undefined e são recusados.
+function toClaimReviews(value: unknown, limits: ValidationLimits): ClaimReviewMark[] {
+  if (!Array.isArray(value) || value.length > limits.maxClaimReviews) throw new FetchError("network");
+  const marks: ClaimReviewMark[] = [];
+  for (let i = 0; i < value.length; i++) marks.push(toClaimReview(value[i], limits.maxUrlLength));
+  return marks;
 }
 
 // skipReason é null exatamente quando selected é true.
@@ -88,7 +120,7 @@ function checkGroups(refs: MediaRef[], maxSelected: number): void {
 
 export function validateWorkerPage(message: unknown, limits: ValidationLimits): ExtractedPage {
   if (!isPlainObject(message) || !hasExactKeys(message, PAGE_KEYS)) throw new FetchError("network");
-  const { title, headline, media, possiblyNeedsJavaScript } = message;
+  const { title, headline, media, possiblyNeedsJavaScript, claimReviews } = message;
   if (!isText(title) || !isText(headline)) throw new FetchError("network");
   if (!Array.isArray(media) || media.length > limits.maxMediaRefs) throw new FetchError("network");
   if (typeof possiblyNeedsJavaScript !== "boolean" || (possiblyNeedsJavaScript && media.length > 0)) throw new FetchError("network");
@@ -96,5 +128,5 @@ export function validateWorkerPage(message: unknown, limits: ValidationLimits): 
   const refs: MediaRef[] = [];
   for (let i = 0; i < media.length; i++) refs.push(toMediaRef(media[i], limits, media.length));
   checkGroups(refs, limits.maxSelectedMedia);
-  return { title, headline, media: refs, possiblyNeedsJavaScript };
+  return { title, headline, media: refs, possiblyNeedsJavaScript, claimReviews: toClaimReviews(claimReviews, limits) };
 }

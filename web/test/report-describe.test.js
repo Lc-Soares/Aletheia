@@ -3,7 +3,20 @@ import { describe, test } from "node:test";
 
 import { describeReport } from "../public/report-describe.js";
 import { parseReport } from "../public/report-parse.js";
-import { API_NOTICES, FIXED_NOTICE_TEXT, SHA, apiExample, okSignals, singleMedia, syntheticC2pa, variantsPage } from "./fixtures/report-fixtures.js";
+import { summarizeSignals } from "../public/report-summary.js";
+import {
+  API_NOTICES,
+  CLAIM_REVIEW_NOTICE_TEXT,
+  FIXED_NOTICE_TEXT,
+  SHA,
+  apiExample,
+  claimReview,
+  okSignals,
+  singleMedia,
+  syntheticC2pa,
+  variantsPage,
+  withClaimReviews,
+} from "./fixtures/report-fixtures.js";
 import { allText, attributesOf, byTag, flatten, nodesWithText, tagsOf } from "./tree.js";
 
 /** @param {unknown} json */
@@ -417,5 +430,112 @@ describe("relatório: árvore", () => {
       target["log"] = saved;
     }
     assert.deepEqual(written, []);
+  });
+});
+
+describe("relatório: marcação ClaimReview declarada pela página", () => {
+  const HEADING = "Marcação de checagem declarada pela página (ClaimReview)";
+  const LIMIT_TEXT = "Mostramos no máximo 5 marcações.";
+  /** @param {Record<string, unknown>[]} marks */
+  const withMarks = (marks) => {
+    const json = apiExample();
+    json.page["claimReviews"] = marks;
+    return json;
+  };
+  /** Valor (dd) da linha com o rótulo dado, como texto, na ordem da árvore. @param {import("../public/report-describe.js").Descriptor} root @param {string} label */
+  const valuesOf = (root, label) => {
+    const nodes = flatten(root);
+    return nodes.flatMap((node, i) => (node.tag === "dt" && node.text === label ? [allText(/** @type {never} */ (nodes[i + 1]))] : []));
+  };
+
+  test("ausente: nenhuma seção, nenhum aviso e nenhum texto de 'não encontrado'", () => {
+    for (const json of [apiExample(), withMarks([])]) {
+      const text = allText(tree(json));
+      assert.doesNotMatch(text, /ClaimReview|checagem/i);
+    }
+  });
+
+  test("seção entre a página analisada e as mídias, com título, aviso fixo, explicação e contagem", () => {
+    const root = tree(withClaimReviews(1));
+    const headings = byTag(root, "h3").map((h) => h.text);
+    assert.deepEqual(headings.slice(-3), ["Página analisada", HEADING, "Mídias"]);
+    const text = allText(root);
+    assert.ok(text.includes(CLAIM_REVIEW_NOTICE_TEXT));
+    assert.ok(text.includes("Qualquer site pode publicar essa marcação. O conteúdo abaixo foi declarado pela página, não pelo Aletheia."));
+    assert.ok(text.includes("1 marcação ClaimReview encontrada."));
+    assert.ok(allText(tree(withClaimReviews(2))).includes("2 marcações ClaimReview encontradas."));
+  });
+
+  test("a fonte fica sempre visível: domínio e endereço da página que declarou", () => {
+    const root = tree(withClaimReviews(1));
+    const [source] = valuesOf(root, "Declarada por");
+    assert.ok(source?.includes("exemplo.com.br"));
+    assert.ok(source?.includes("https://exemplo.com.br/materia"));
+    const json = withClaimReviews(1);
+    json.page.finalUrl = null;
+    assert.deepEqual(valuesOf(tree(json), "Declarada por"), ["Não informado"]);
+  });
+
+  test("cada marcação: afirmação, avaliação citada entre aspas, nota, autor, data e endereço", () => {
+    const root = tree(withMarks([claimReview()]));
+    assert.deepEqual(byTag(root, "h4").map((h) => h.text).filter((t) => t?.startsWith("Marcação")), ["Marcação 1"]);
+    assert.deepEqual(valuesOf(root, "Afirmação checada (segundo a página)"), ["A Terra é plana"]);
+    assert.deepEqual(valuesOf(root, "Avaliação declarada pela página"), ["“Falso”"]);
+    assert.deepEqual(valuesOf(root, "Nota declarada"), ["1 (escala de 1 a 5)"]);
+    assert.deepEqual(valuesOf(root, "Quem publicou a checagem (declarado)"), ["Agência de Checagem"]);
+    assert.deepEqual(valuesOf(root, "Data da checagem (declarada)"), ["2024-06-22"]);
+    assert.deepEqual(valuesOf(root, "Endereço da checagem (declarado)"), ["https://checagem.example/terra-plana"]);
+  });
+
+  test("nota: sem escala quando faltam os extremos; sem linha quando falta a nota", () => {
+    assert.deepEqual(valuesOf(tree(withMarks([claimReview({ bestRating: null })])), "Nota declarada"), ["1"]);
+    assert.deepEqual(valuesOf(tree(withMarks([claimReview({ ratingValue: null })])), "Nota declarada"), []);
+  });
+
+  test("campos ausentes aparecem como 'Não informado'", () => {
+    const empty = { claimReviewed: null, ratingLabel: null, ratingValue: null, bestRating: null, worstRating: null, url: null, authorName: null, datePublished: null };
+    const root = tree(withMarks([empty]));
+    for (const label of ["Afirmação checada (segundo a página)", "Avaliação declarada pela página", "Quem publicou a checagem (declarado)", "Data da checagem (declarada)", "Endereço da checagem (declarado)"]) {
+      assert.deepEqual(valuesOf(root, label), ["Não informado"], label);
+    }
+  });
+
+  test("endereço http(s) vira link seguro cujo texto é sempre o endereço completo", () => {
+    const url = "https://checagem.example/terra-plana?x=1";
+    const links = byTag(tree(withMarks([claimReview({ url })])), "a").filter((a) => a.attrs?.["href"] === url);
+    assert.equal(links.length, 1);
+    assert.deepEqual(links[0], { tag: "a", text: url, attrs: { class: "report-link", href: url, rel: "noopener noreferrer nofollow", target: "_blank" } });
+  });
+
+  test("endereço que não é http(s) ou tem usuário e senha fica só como texto, sem link", () => {
+    for (const url of ["javascript:alert(1)", "https://u:p@checagem.example/", "/relativa", "data:text/html,x"]) {
+      const root = tree(withMarks([claimReview({ url })]));
+      assert.equal(attributesOf(root).some(([, name, value]) => name === "href" && value !== "https://exemplo.com.br/materia"), false, url);
+      assert.deepEqual(valuesOf(root, "Endereço da checagem (declarado)"), [url]);
+    }
+  });
+
+  test("exatamente 5 marcações: avisa que mostramos no máximo 5; com 4, não", () => {
+    assert.ok(allText(tree(withClaimReviews(5))).includes(LIMIT_TEXT));
+    assert.equal(allText(tree(withClaimReviews(4))).includes(LIMIT_TEXT), false);
+    assert.ok(allText(tree(withClaimReviews(8))).includes(LIMIT_TEXT)); // o parse já cortou em 5
+  });
+
+  test("nenhum veredito do Aletheia: o rótulo só aparece como citação; o resumo não muda", () => {
+    const json = withClaimReviews(1);
+    const root = tree(json);
+    let text = allText(root).replace("“Falso”", "").replace(FIXED_NOTICE_TEXT, "").replace(/Isso não indica fraude\./g, "");
+    for (const notice of API_NOTICES) text = text.replace(notice, "");
+    assert.doesNotMatch(text, /verdadeir|fals[ao]|fraud|fake|mentira/i);
+    const report = parseReport(json);
+    const plain = parseReport(apiExample());
+    assert.ok(report && plain);
+    assert.deepEqual(summarizeSignals(report), summarizeSignals(plain));
+  });
+
+  test("sem cor nem tag nova: só as tags e classes que o relatório já usa", () => {
+    const known = new Set(tagsOf(tree(apiExample())));
+    for (const tag of tagsOf(tree(withClaimReviews(5)))) assert.ok(known.has(tag) || tag === "a", tag);
+    for (const [, name] of attributesOf(tree(withClaimReviews(1)))) assert.notEqual(name, "style");
   });
 });

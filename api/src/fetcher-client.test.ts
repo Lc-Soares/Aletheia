@@ -7,6 +7,7 @@ import { createFetcherClient, type FetcherClientLimits, type FetcherOutcome } fr
 import {
   CAPA_BYTES,
   CAPA_REF,
+  claimReviewMark,
   DONE_LINE,
   FOTO_BYTES,
   FOTO_REF,
@@ -126,6 +127,53 @@ describe("cliente do fetcher: resposta válida", () => {
     const { outcome } = await run(respond(standardStream()));
     assert.equal(JSON.stringify(outcome).includes(TEST_SERVICE_TOKEN), false);
   });
+});
+
+describe("cliente do fetcher: marcações ClaimReview", () => {
+  const withMarks = (claimReviews: unknown): string => ndjson([pageLine({ media: [ONLY_ICON], claimReviews }), DONE_LINE]);
+
+  test("linha page com marcações: chegam como vieram", async () => {
+    const marks = [claimReviewMark(), claimReviewMark({ claimReviewed: null, ratingValue: 2.5, url: null, authorName: "<b>Agência</b>" })];
+    const { outcome } = await run(respond(withMarks(marks)));
+    assert.ok(outcome.kind === "page");
+    assert.deepEqual(outcome.page.claimReviews, marks);
+  });
+
+  test("fetcher anterior à Fase 5a (linha page sem claimReviews): aceito, com lista vazia", async () => {
+    const { outcome } = await run(respond(standardStream()));
+    assert.ok(outcome.kind === "page");
+    assert.deepEqual(outcome.page.claimReviews, []);
+  });
+
+  test("limites exatos passam: 5 marcações, 300 caracteres, data de 64", async () => {
+    const marks = Array.from({ length: 5 }, (_, i) => claimReviewMark({ claimReviewed: `${i}`.padEnd(300, "a"), datePublished: "d".repeat(64) }));
+    const { outcome } = await run(respond(withMarks(marks)));
+    assert.ok(outcome.kind === "page");
+    assert.equal(outcome.page.claimReviews.length, 5);
+  });
+
+  const bad: Array<[string, unknown]> = [
+    ["claimReviews null", null],
+    ["claimReviews objeto", { length: 0 }],
+    ["mais de 5 marcações", Array.from({ length: 6 }, () => claimReviewMark())],
+    ["marcação null", [null]],
+    ["marcação com chave a mais", [{ ...claimReviewMark(), itemReviewed: { author: "x" } }]],
+    ["marcação sem uma chave", [{ claimReviewed: "x" }]],
+    ["claimReviewed acima de 300", [claimReviewMark({ claimReviewed: "a".repeat(301) })]],
+    ["datePublished acima de 64", [claimReviewMark({ datePublished: "d".repeat(65) })]],
+    ["ratingLabel número", [claimReviewMark({ ratingLabel: 1 })]],
+    ["ratingValue texto", [claimReviewMark({ ratingValue: "1" })]],
+    ["bestRating objeto", [claimReviewMark({ bestRating: {} })]],
+    ["url javascript:", [claimReviewMark({ url: "javascript:alert(1)" })]],
+    ["url com usuário e senha", [claimReviewMark({ url: "https://u:p@example.com/" })]],
+    ["url não normalizada", [claimReviewMark({ url: "HTTPS://Example.com/a" })]],
+    ["url acima de 2048", [claimReviewMark({ url: `https://example.com/${"a".repeat(2048)}` })]],
+  ];
+  for (const [name, claimReviews] of bad) {
+    test(`${name}: resposta malformada`, async () => {
+      assertMalformed((await run(respond(withMarks(claimReviews)))).outcome, name);
+    });
+  }
 });
 
 describe("cliente do fetcher: 503 e novas tentativas", () => {

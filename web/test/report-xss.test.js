@@ -4,7 +4,7 @@ import { describe, test } from "node:test";
 import { describeReport } from "../public/report-describe.js";
 import { mount } from "../public/report-mount.js";
 import { parseReport } from "../public/report-parse.js";
-import { apiExample, syntheticC2pa } from "./fixtures/report-fixtures.js";
+import { apiExample, claimReview, syntheticC2pa } from "./fixtures/report-fixtures.js";
 import { createFakeDocument } from "./fake-dom.js";
 import { allText, attributesOf, flatten, tagsOf } from "./tree.js";
 
@@ -47,6 +47,11 @@ const FIELDS = [
   { name: "c2pa.generator", set: (j, v) => (c2pa(j)["generator"] = v) },
   { name: "c2pa.checks.code", shown: false, set: (j, v) => (firstOf(c2pa(j)["checks"])["code"] = v) },
   { name: "c2pa.checks.outcome", shown: false, set: (j, v) => (firstOf(c2pa(j)["checks"])["outcome"] = v) },
+  { name: "claimReviews.claimReviewed", set: (j, v) => (claim(j)["claimReviewed"] = v) },
+  { name: "claimReviews.ratingLabel", set: (j, v) => (claim(j)["ratingLabel"] = v) },
+  { name: "claimReviews.authorName", set: (j, v) => (claim(j)["authorName"] = v) },
+  { name: "claimReviews.datePublished", set: (j, v) => (claim(j)["datePublished"] = v) },
+  { name: "claimReviews.url", set: (j, v) => (claim(j)["url"] = v) },
 ];
 
 /** Primeiro item de uma lista crua de objetos. @param {unknown} list @returns {Record<string, string>} */
@@ -55,6 +60,8 @@ const firstOf = (list) => /** @type {Record<string, string>} */ (/** @type {unkn
 const signals = (json) => /** @type {{ metadata: { signals: Record<string, unknown> } }} */ (json.media[0]).metadata.signals;
 /** @param {ReturnType<typeof base>} json @returns {Record<string, unknown>} */
 const c2pa = (json) => /** @type {Record<string, unknown>} */ (signals(json)["c2pa"]);
+/** @param {ReturnType<typeof base>} json @returns {Record<string, unknown>} */
+const claim = (json) => /** @type {Record<string, unknown>[]} */ (json.page["claimReviews"])[0] ?? {};
 
 /** Relatório com todos os campos de terceiros preenchidos (C2PA sintético). */
 function base() {
@@ -62,6 +69,7 @@ function base() {
   const first = /** @type {{ metadata: { signals: Record<string, unknown> } }} */ (json.media[0]);
   first.metadata.signals["c2pa"] = syntheticC2pa();
   first.metadata.signals["software"] = ["Editor"];
+  json.page["claimReviews"] = [claimReview()];
   json.media.push({
     ...json.media[1],
     url: "https://exemplo.com.br/quarta.jpg",
@@ -92,6 +100,8 @@ describe("XSS: cada campo de terceiros × cada carga hostil", () => {
 
         // Nenhum elemento nasce da carga: mesma quantidade de nós e mesmas tags do relatório base.
         if (field.name !== "page.finalUrl") assert.equal(flatten(root).length, baselineNodes);
+        // O texto do link é sempre o próprio endereço, nunca um rótulo vindo da página.
+        for (const link of flatten(root).filter((node) => node.tag === "a")) assert.equal(link.text, link.attrs?.["href"]);
         assert.deepEqual(tagsOf(root).filter((t) => FORBIDDEN_TAGS.includes(t)), []);
 
         // A carga só aparece como texto, higienizada: sem controles nem bidi, e com tamanho limitado.
@@ -129,12 +139,71 @@ describe("XSS: URL final com esquema perigoso nunca vira link", () => {
   }
 });
 
+describe("XSS: URL da checagem (ClaimReview) com esquema perigoso nunca vira link", () => {
+  for (const url of ["javascript:alert(1)", "JAVASCRIPT:alert(1)", "data:text/html,<script>1</script>", "vbscript:x", "\u202Ejavascript:alert(1)", "java\tscript:alert(1)", "https://u:p@checagem.example/", "//checagem.example/x"]) {
+    test(JSON.stringify(url).slice(0, 50), () => {
+      const json = base();
+      claim(json)["url"] = url;
+      const root = render(json);
+      const hrefs = attributesOf(root).filter(([, name]) => name === "href").map(([, , value]) => String(value));
+      assert.deepEqual(hrefs, ["https://exemplo.com.br/materia", "https://exemplo.com.br/materia"]);
+    });
+  }
+});
+
+describe("XSS: __proto__ e constructor no JSON não são lidos como herança", () => {
+  const PAGE_FIELDS = '"finalUrl":"https://exemplo.com.br/materia","title":"T","headline":null';
+
+  test("page com __proto__ e constructor (chaves próprias do JSON): nenhuma marcação aparece", () => {
+    const text = `{"page":{${PAGE_FIELDS},"__proto__":{"claimReviews":[{"claimReviewed":"herdado"}]},"constructor":{"claimReviews":[{"claimReviewed":"do constructor"}]}},"media":[],"notices":[]}`;
+    const report = parseReport(JSON.parse(text));
+    assert.ok(report);
+    assert.deepEqual(report.page.claimReviews, []);
+    assert.doesNotMatch(allText(describeReport(report)), /herdado|do constructor|ClaimReview/);
+  });
+
+  test("marcação com __proto__ e constructor: só as chaves próprias conhecidas são lidas", () => {
+    const item = '{"__proto__":{"claimReviewed":"herdado","url":"https://herdado.example/"},"constructor":{"ratingLabel":"x"},"ratingLabel":"Falso"}';
+    const report = parseReport(JSON.parse(`{"page":{${PAGE_FIELDS},"claimReviews":[${item}]},"media":[],"notices":[]}`));
+    assert.ok(report);
+    assert.deepEqual(report.page.claimReviews, [
+      { claimReviewed: null, ratingLabel: "Falso", ratingValue: null, bestRating: null, worstRating: null, url: null, authorName: null, datePublished: null },
+    ]);
+    const root = describeReport(report);
+    assert.doesNotMatch(allText(root), /herdado/);
+    assert.equal(attributesOf(root).some(([, , value]) => String(value).includes("herdado")), false);
+  });
+
+  test("herança de verdade (objeto com protótipo) também não é lida", () => {
+    const json = apiExample();
+    json.page = Object.assign(Object.create({ claimReviews: [claimReview()] }), json.page);
+    let report = parseReport(json);
+    assert.deepEqual(report?.page.claimReviews, []);
+    const inherited = Object.assign(Object.create({ claimReviewed: "herdado", url: "https://herdado.example/" }), { ratingLabel: "Falso" });
+    json.page = { ...apiExample().page, claimReviews: [inherited] };
+    report = parseReport(json);
+    assert.equal(report?.page.claimReviews[0]?.claimReviewed, null);
+    assert.equal(report?.page.claimReviews[0]?.url, null);
+    assert.equal(report?.page.claimReviews[0]?.ratingLabel, "Falso");
+  });
+
+  test("Object.prototype fica intacto depois do parse e da descrição", () => {
+    const text = `{"page":{${PAGE_FIELDS},"__proto__":{"polluted":"sim"},"claimReviews":[{"__proto__":{"polluted":"sim"}}]},"media":[],"notices":[]}`;
+    const report = parseReport(JSON.parse(text));
+    assert.ok(report);
+    describeReport(report);
+    assert.equal(Object.hasOwn(Object.prototype, "polluted"), false);
+    assert.equal(/** @type {Record<string, unknown>} */ ({})["polluted"], undefined);
+  });
+});
+
 describe("XSS: o mount com o document falso mantém a carga como texto", () => {
   for (const payload of PAYLOADS) {
     test(payload.name, () => {
       const json = base();
       for (const field of FIELDS) field.set(json, payload.value);
       const root = render(json);
+      assert.ok(allText(root).includes("Marcação 1"), "a seção de ClaimReview precisa estar na árvore montada");
       const { doc, created } = createFakeDocument();
       assert.doesNotThrow(() => mount(root, /** @type {never} */ (doc)));
       assert.equal(created.length, flatten(root).length, "só os nós do descritor viram elementos");

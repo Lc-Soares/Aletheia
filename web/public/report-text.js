@@ -44,6 +44,24 @@ export const TEXT = {
   aiNo: "Não marcado como gerado por IA nos metadados C2PA",
 };
 
+/**
+ * Marcação ClaimReview declarada pela página. Tudo que vem da marcação é citação de terceiro: o
+ * rótulo da avaliação sai entre aspas, e a fonte (a página que declarou) fica sempre visível.
+ */
+export const CLAIM_REVIEW_TEXT = {
+  heading: "Marcação de checagem declarada pela página (ClaimReview)",
+  notice: "A página se apresenta como uma checagem. Isso não indica que a checagem esteja correta.",
+  explanation: "Qualquer site pode publicar essa marcação. O conteúdo abaixo foi declarado pela página, não pelo Aletheia.",
+  limit: "Mostramos no máximo 5 marcações.",
+  source: "Declarada por",
+  claim: "Afirmação checada (segundo a página)",
+  rating: "Avaliação declarada pela página",
+  score: "Nota declarada",
+  author: "Quem publicou a checagem (declarado)",
+  date: "Data da checagem (declarada)",
+  url: "Endereço da checagem (declarado)",
+};
+
 /** Tags de data da lista permitida da API (docs/api.md, "Lista permitida de sinais"). */
 export const DATE_LABELS = {
   "EXIF:DateTimeOriginal": "Data original da captura (EXIF)",

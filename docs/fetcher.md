@@ -1,6 +1,6 @@
 # Fetcher
 
-Serviço isolado que recebe a URL enviada pelo usuário, baixa a página e as mídias dela em memória e devolve título, manchete, lista de mídias e, para cada mídia baixada, bytes, SHA-256 e content-type. É o único componente que acessa a internet aberta. Não chama ExifTools, Vision, Web Risk nem Fact Check, e não lê ClaimReview (Fase 5).
+Serviço isolado que recebe a URL enviada pelo usuário, baixa a página e as mídias dela em memória e devolve título, manchete, lista de mídias, as marcações ClaimReview que a página declara e, para cada mídia baixada, bytes, SHA-256 e content-type. É o único componente que acessa a internet aberta. Não chama ExifTools, Vision, Web Risk nem Fact Check. A leitura de ClaimReview (Fase 5a) é local, sem rede: ver "ClaimReview".
 
 ## Regras de implantação (obrigatórias)
 
@@ -39,7 +39,7 @@ Serviço isolado que recebe a URL enviada pelo usuário, baixa a página e as m�
 Resposta `200`, `application/x-ndjson`, com uma linha JSON por evento:
 
 ```
-{"type":"page","finalUrl":"...","title":"...","headline":"...","possiblyNeedsJavaScript":false,"media":[{"url":"...","kind":"image","source":"og:image","group":1,"score":100,"selected":true,"skipReason":null}, ...]}
+{"type":"page","finalUrl":"...","title":"...","headline":"...","possiblyNeedsJavaScript":false,"claimReviews":[{"claimReviewed":"...","ratingLabel":"...","ratingValue":1,"bestRating":5,"worstRating":1,"url":"https://...","authorName":"...","datePublished":null}],"media":[{"url":"...","kind":"image","source":"og:image","group":1,"score":100,"selected":true,"skipReason":null}, ...]}
 {"type":"media","url":"...","kind":"image","source":"img","group":2,"contentType":"image/jpeg","size":12345,"sha256":"<hex>","data":"<base64>"}
 {"type":"media_error","url":"...","kind":"image","source":"img","group":3,"error":"upstream_status","httpStatus":404}
 {"type":"media_error","url":"...","kind":"image","source":"img","group":4,"error":"blocked"}
@@ -53,9 +53,10 @@ Resposta `200`, `application/x-ndjson`, com uma linha JSON por evento:
   - `skipReason`: `null` quando selecionada; senão `variant` (outra variante do grupo foi a escolhida), `icon` (ícone ou elemento de interface), `unsupported_format` (SVG), `low_score` (pontuação negativa: sinais de elemento secundário da página), `limit` (passou de `maxSelectedMedia`) ou `other` (reservado; aceito, mas não emitido hoje).
 - Só as selecionadas são baixadas, no máximo `maxSelectedMedia` (8), em ordem de grupo. Ver "Seleção de mídias (heurística)".
 - `possiblyNeedsJavaScript` é um sinal heurístico, nunca certeza. Ver "Sinal de página montada por JavaScript".
+- `claimReviews` traz até 5 marcações ClaimReview declaradas pela página, ou lista vazia. Ver "ClaimReview". **Mudança de contrato da Fase 5a:** a API anterior recusa a linha com esse campo, então a API nova sobe primeiro (`docs/api.md`, "Marcação ClaimReview").
 - `httpStatus` só aparece com `upstream_status`: o número do status HTTP que o site respondeu (100 a 599), nada do corpo nem dos cabeçalhos.
 - A resposta é transmitida em streaming (chunked). A página de cotas do Cloud Run diz que o limite de 32 MiB por resposta HTTP/1 não se aplica com `Transfer-Encoding: chunked` ou streaming.
-- Os campos `title`, `headline` e `url` são texto controlado por terceiros. Quem exibir esse texto precisa escapá-lo.
+- Os campos `title`, `headline`, `url` e os textos de `claimReviews` são controlados por terceiros. Quem exibir esse texto precisa escapá-lo.
 
 Erros:
 
@@ -186,6 +187,11 @@ Os testes usam resolvedor e transporte injetados. A única "política de teste" 
 | Requisições `/fetch` em andamento | 2 | Cada uma pode segurar até cerca de 126 MiB; acima disso, 503 rápido, depois da autenticação e antes de ler o corpo. A vaga só volta no fim do streaming, que tem os dois prazos abaixo. |
 | Resposta NDJSON: inatividade de escrita | 10 s | Conta só enquanto o fetcher espera o `drain` de uma fatia de 64 KiB, ou seja, enquanto quem chamou não está lendo. Um consumidor saudável em memória, na mesma região, esvazia 64 KiB em milissegundos; 10 s sem esvaziar 64 KiB é menos de 6,4 KB/s, na prática um leitor parado. Esgotado, a resposta é destruída e a vaga volta. Uma origem lenta não conta: o `fetchPage` termina antes do `writeHead`. |
 | Resposta NDJSON: prazo total | 60 s | Desde o `writeHead`. A maior resposta tem cerca de 80 MiB (60 MiB de mídia em base64 mais a linha `page`); 60 s exigem cerca de 11 Mbit/s, muito abaixo da rede entre serviços do Cloud Run. Corta o leitor que lê aos poucos para fugir da inatividade. Com o prazo da página (30 s), uma vaga fica presa no máximo cerca de 90 s, contra os 300 s padrão do Cloud Run. |
+| Blocos JSON-LD lidos por página (`maxJsonLdBlocks`) | 20 | Páginas com Yoast e similares têm de 1 a 5 blocos. Os seguintes, na ordem do documento, são ignorados. |
+| Tamanho de cada bloco JSON-LD (`maxJsonLdBlockChars`) | 256 Ki caracteres (UTF-16) | Cabe um NewsArticle com `articleBody`. Bloco maior é ignorado inteiro, sem `JSON.parse`. |
+| Objetos e listas visitados por bloco (`maxJsonLdNodes`) | 2 000 | Cabe um `@graph` grande; corta listas com milhões de itens. |
+| Profundidade do JSON-LD (`maxJsonLdDepth`) | 16 | O exemplo oficial tem profundidade 5 (cerca de 7 com `@graph`). Bloco mais fundo é ignorado antes do `JSON.parse`. |
+| Marcações ClaimReview por página (`maxClaimReviews`) | 5 | Teto da saída e do contrato. A página oficial pede uma só por página; agregadores podem ter mais. |
 | Redirecionamentos | 5 | Definido na arquitetura. |
 | Cabeçalhos de resposta | 16 KiB | Padrão do Node; cabeçalhos maiores são anormais. |
 | URL | 2048 caracteres | Limite prático de navegadores e CDNs. |
@@ -202,11 +208,47 @@ SVG fica de fora porque é XML e pode conter script. Quando dá para reconhecê-
 ## Extração de HTML
 
 Usa parse5 (WHATWG, o mesmo algoritmo dos navegadores) sem executar script e sem buscar recurso nenhum.
-- **Coleta:** `meta property|name = og:image[:url|:secure_url]`, `twitter:image[:src]`, `og:video[...]` e `og:title`; `img[src|srcset]`; `source[src|srcset]` dentro de `picture`/`video`; `video[src|poster]`; `<title>`; o primeiro `<h1>`.
+- **Coleta:** `meta property|name = og:image[:url|:secure_url]`, `twitter:image[:src]`, `og:video[...]` e `og:title`; `img[src|srcset]`; `source[src|srcset]` dentro de `picture`/`video`; `video[src|poster]`; `<title>`; o primeiro `<h1>`; o texto de `<script type="application/ld+json">` (ver "ClaimReview").
 - **Coleta com teto:** os valores brutos são deduplicados já na coleta e param em 4 × `maxMediaRefs` (800) por lista (og e corpo), antes de resolver as URLs. Sem esse teto, 100 mil nós com `srcset` gerariam milhões de entradas e de `new URL` (achado 7 da revisão). A folga cobre valores inválidos e variações que viram a mesma URL (por exemplo, fragmentos diferentes).
 - **Resolução:** honra o primeiro `<base href>` http(s); descarta `data:`, `javascript:`, `blob:` e outros esquemas; remove fragmento e duplicadas.
-- **Fora da varredura:** conteúdo de `<template>`, `<script>`, comentários, atributos e `<noscript>` (que o parse5 trata como texto).
+- **Fora da varredura:** conteúdo de `<template>`, `<script>`, comentários, atributos e `<noscript>` (que o parse5 trata como texto). A única exceção é o texto de `<script type="application/ld+json">`, lido só como dado JSON, nunca como HTML (ver "ClaimReview").
 - **Charset:** vem do cabeçalho `Content-Type`. Se for desconhecido ou estiver ausente, usa UTF-8. Não há detecção por `<meta charset>`.
+
+### ClaimReview
+
+Fase 5a. Mostra se a própria página se apresenta como checagem. **Qualquer site pode escrever essa marcação**: ela não indica que a checagem esteja correta, e a ausência dela não diz nada. Campos e formato vêm da página oficial do Google (`docs/apis/fact-check.md`, seção 2); as fixtures de teste são os dois exemplos oficiais, transcritos literalmente (`OFFICIAL_CLAIMREVIEW` e `OFFICIAL_CLAIMREVIEW_LEGACY` em `testing.ts`).
+
+**Onde:** no walk do `extract.ts`, dentro do worker de extração (mesmos heap, prazo e teto de nós), com o parse5 que já existe. O `jsonld.ts` é puro e só importa `media.ts`.
+- Um `<script>` HTML com `type` igual a `application/ld+json` (sem espaços nas pontas, sem diferenciar maiúsculas) tem o texto dos filhos juntado, com teto durante a junção.
+- O parse5 trata o conteúdo como texto cru: `</script>` dentro de uma string fecha o bloco (o JSON fica inválido e o resto vira HTML, como no navegador), e `<\/script>` é só um escape do JSON.
+- Ficam de fora: scripts dentro de `<template>`, `<noscript>`, comentário e `<svg>`.
+
+**Leitura segura, por bloco:**
+1. acima de `maxJsonLdBlockChars`, o bloco é ignorado sem parse;
+2. uma pré-varredura linear conta a profundidade de `[` e `{` fora de strings (respeitando `\"`); acima de `maxJsonLdDepth`, o bloco é ignorado antes do `JSON.parse`;
+3. `JSON.parse` em `try/catch`: JSON inválido ignora só aquele bloco;
+4. a busca é iterativa (pilha explícita), com até `maxJsonLdNodes` objetos e listas por bloco e o mesmo teto de profundidade.
+
+Nenhuma falha derruba a extração: título, manchete e mídias saem como sempre. Os cinco tetos estão em "Limites e justificativas" e só podem ser reduzidos; o `extract.ts` também não aceita valor acima do padrão.
+
+**Formas aceitas:** objeto único, array na raiz, `@graph` (array ou objeto) e ClaimReview aninhado em qualquer valor (`mainEntity`, `review`...).
+- `@type` como texto ou lista, igual a `ClaimReview`, `https://schema.org/ClaimReview` ou `http://schema.org/ClaimReview`, exatamente. `schema:ClaimReview` e variações de maiúsculas não contam.
+- O `@context` não é exigido.
+- A busca não desce dentro de um ClaimReview já encontrado.
+- Só propriedades próprias são lidas (`Object.hasOwn`): nada vem do protótipo, nem por chaves `__proto__` ou `constructor`.
+- Marcações idênticas (todos os campos iguais) são descartadas **antes** do teto de 5, por exemplo a mesma marcação na raiz de um bloco e no `@graph` de outro.
+
+**Campos de saída** (tabela completa em `docs/api.md`, "Marcação ClaimReview"): `claimReviewed`, `ratingLabel` (`alternateName`, ou `name` na falta dele), `ratingValue`, `bestRating` e `worstRating` (só `number` finito), `url` (só http(s) absoluta, sem usuário e senha, normalizada), `authorName` (`author` como texto, objeto com `name` ou lista) e `datePublished` (da raiz, a data da checagem). Os textos passam pelo mesmo `normalizeText` de título e manchete (300; data em 64).
+- **Não saem:** `itemReviewed` inteiro (autor, data e aparições da afirmação), `publisher` (que a página oficial não lista em ClaimReview; "quem publica a checagem" é o `author`), `author.url`, `sameAs`, imagens e logos.
+- **A url da checagem nunca é buscada** pelo fetcher, e nenhum outro endereço da marcação é.
+
+**Validação no processo principal** (`worker-message.ts`): `claimReviews` é obrigatório, com até `maxClaimReviews` itens e chaves exatas; textos `null` ou bem formados dentro do teto; números `null` ou finitos (`NaN` e `Infinity` só chegariam por clone estruturado e são recusados); `url` `null` ou http(s) normalizada sem usuário e senha. Qualquer desvio vira `network`.
+
+**Limitações:**
+- JSON-LD envolto em `<!-- -->` ou `<![CDATA[ ]]>` (com ou sem `/* */`) é JSON inválido e fica de fora. Alguns CMS antigos fazem isso.
+- Microdata e RDFa (ClaimReview fora de JSON-LD) não são lidos.
+- `@type` só pelo termo curto ou IRI completo; um `@context` que renomeie o tipo não é interpretado.
+- Só testado com fixtures a partir dos exemplos oficiais; falta uma página real (`docs/pendencias.md`).
 
 ### Seleção de mídias (heurística)
 
@@ -278,11 +320,11 @@ Decisão de produto: o sistema escolhe sozinho as imagens principais, para usuá
 A revisão de segurança da Fase 3 mostrou que o parse5, por montar a árvore inteira, tem dois casos patológicos com HTML pequeno: explosão de memória na reconstrução de elementos de formatação (cerca de 73 KB derrubavam o processo por falta de heap) e CPU quadrática com tags de fechamento órfãs (2 MiB passariam de 3 minutos de CPU síncrona, com o event loop parado). Por isso o parse e a extração rodam fora do event loop principal (`extract-pool.ts` e `extract-worker.ts`):
 
 - **Um worker novo por extração**, encerrado com `terminate()` em `finally`: no sucesso, no erro, no prazo e quando quem chamou cancela a requisição. Nenhum estado passa de uma requisição para outra.
-- **Entrada e saída:** o worker recebe só o HTML decodificado, a URL base e quatro limites numéricos (`maxMediaRefs`, `maxUrlLength`, `maxHtmlNodes` e `maxSelectedMedia`), e devolve dados simples (título, manchete, referências com grupo e seleção, e o sinal de JavaScript). Roda com `execArgv: []` e `env: {}`.
+- **Entrada e saída:** o worker recebe só o HTML decodificado, a URL base e nove limites numéricos (`maxMediaRefs`, `maxUrlLength`, `maxHtmlNodes`, `maxSelectedMedia` e os cinco de JSON-LD), e devolve dados simples (título, manchete, referências com grupo e seleção, o sinal de JavaScript e as marcações ClaimReview). Roda com `execArgv: []` e `env: {}`.
 - **O código do worker não importa módulos de rede, disco ou processo.** Um teste percorre o grafo de imports, incluindo parse5 e entities, e exige que o único módulo nativo seja `node:worker_threads`.
 - **O worker NÃO é uma sandbox.** Ele tem `fetch`, `process` e `import()` dinâmico como globais; um teste confirma isso. Uma falha explorável no parser, rodando no worker, poderia usar esses globais para fazer requisições, ler o ambiente do processo ou carregar módulos. **O isolamento é de memória e de CPU** (heap limitado, prazo, `terminate()` e a validação da mensagem no processo principal), não de capacidades. A defesa contra o que o worker poderia alcançar continua sendo a da instância: conta de serviço sem papéis IAM, nenhum segredo no ambiente e o IAM do Cloud Run.
 - **Limites:** `resourceLimits` com 128 MiB de old generation e 32 MiB de young. O estouro chega como `ERR_WORKER_OUT_OF_MEMORY` e vira `too_large`; o prazo de 2,5 s (ou o cancelamento) vira `timeout`; qualquer outra falha vira `network`.
-- **Saída validada no processo principal** (`worker-message.ts`): a mensagem do worker é tratada como não confiável. Só passa um objeto com exatamente `title`, `headline`, `media` e `possiblyNeedsJavaScript`. `title` e `headline` precisam ser `null` ou texto bem formado (sem surrogate solto) de até 300 caracteres; o `extract.ts` aplica `toWellFormed()` depois do corte. `possiblyNeedsJavaScript` precisa ser booleano, e só pode ser `true` com `media` vazio. `media` precisa ser um array de até `maxMediaRefs` itens, cada um com exatamente `url`, `kind`, `source`, `group`, `score`, `selected` e `skipReason`:
+- **Saída validada no processo principal** (`worker-message.ts`): a mensagem do worker é tratada como não confiável. Só passa um objeto com exatamente `title`, `headline`, `media`, `possiblyNeedsJavaScript` e `claimReviews` (este validado como em "ClaimReview"). `title` e `headline` precisam ser `null` ou texto bem formado (sem surrogate solto) de até 300 caracteres; o `extract.ts` aplica `toWellFormed()` depois do corte. `possiblyNeedsJavaScript` precisa ser booleano, e só pode ser `true` com `media` vazio. `media` precisa ser um array de até `maxMediaRefs` itens, cada um com exatamente `url`, `kind`, `source`, `group`, `score`, `selected` e `skipReason`:
   - `group` inteiro de 1 ao número de itens; `score` inteiro de −1000 a 1000;
   - `selected` booleano; `skipReason` é `null` exatamente quando `selected` é `true`, e senão um dos motivos conhecidos;
   - cada grupo tem exatamente um item que não é `variant`, e todos os itens do grupo têm o mesmo `kind` e o mesmo `score`;

@@ -62,21 +62,35 @@ export type DownloadResult = MediaIdentity &
     | { ok: true; contentType: string; size: number; sha256: string; bytes: Buffer }
     | { ok: false; error: FetcherCategory; httpStatus?: number }
   );
+// Marcação ClaimReview declarada pela página (cópia de fetcher/src/media.ts). É o que a página
+// declarou, nunca conclusão nossa; a url nunca é buscada.
+export type ClaimReviewMark = {
+  claimReviewed: string | null;
+  ratingLabel: string | null;
+  ratingValue: number | null;
+  bestRating: number | null;
+  worstRating: number | null;
+  url: string | null;
+  authorName: string | null;
+  datePublished: string | null;
+};
 export type FetchedPage = {
   finalUrl: string;
   title: string | null;
   headline: string | null;
   possiblyNeedsJavaScript: boolean;
+  claimReviews: ClaimReviewMark[];
   media: MediaRef[];
   downloads: DownloadResult[];
 };
 
-export type ContractLimits = { maxMediaRefs: number; maxUrlLength: number; maxDownloads: number; maxMediaBytes: number };
+export type ContractLimits = { maxMediaRefs: number; maxUrlLength: number; maxDownloads: number; maxMediaBytes: number; maxClaimReviews: number };
 export const CONTRACT_LIMITS: Readonly<ContractLimits> = Object.freeze({
   maxMediaRefs: 200,
   maxUrlLength: 2048,
   maxDownloads: 8,
   maxMediaBytes: 15 * 1024 * 1024,
+  maxClaimReviews: 5,
 });
 
 export class MalformedResponse extends Error {
@@ -90,7 +104,13 @@ const CATEGORIES: ReadonlySet<unknown> = new Set(FETCHER_CATEGORIES);
 const KINDS: ReadonlySet<unknown> = new Set(MEDIA_KINDS);
 const SOURCES: ReadonlySet<unknown> = new Set(MEDIA_SOURCES);
 const REASONS: ReadonlySet<unknown> = new Set(SKIP_REASONS);
-const PAGE_KEYS = ["finalUrl", "headline", "media", "possiblyNeedsJavaScript", "title", "type"];
+const PAGE_KEYS = ["claimReviews", "finalUrl", "headline", "media", "possiblyNeedsJavaScript", "title", "type"];
+// TRANSIÇÃO (Fase 5a): a linha page do fetcher anterior não tem claimReviews. Aceita sem o campo
+// (lista vazia) para a API poder subir antes do fetcher; remover depois dos dois no ar
+// (docs/pendencias.md).
+const PAGE_KEYS_BEFORE_CLAIM_REVIEWS = PAGE_KEYS.filter((key) => key !== "claimReviews");
+const CLAIM_REVIEW_KEYS = ["authorName", "bestRating", "claimReviewed", "datePublished", "ratingLabel", "ratingValue", "url", "worstRating"];
+const MAX_DATE_LENGTH = 64;
 const REF_KEYS = ["group", "kind", "score", "selected", "skipReason", "source", "url"];
 const MEDIA_KEYS = ["contentType", "data", "group", "kind", "sha256", "size", "source", "type", "url"];
 const MEDIA_ERROR_KEYS = ["error", "group", "kind", "source", "type", "url"];
@@ -113,8 +133,10 @@ function ensure(condition: boolean): asserts condition {
   if (!condition) throw new MalformedResponse();
 }
 
-const isText = (value: unknown): value is string | null =>
-  value === null || (typeof value === "string" && value.length <= MAX_TEXT_LENGTH && value.isWellFormed());
+const isText = (value: unknown, max: number = MAX_TEXT_LENGTH): value is string | null =>
+  value === null || (typeof value === "string" && value.length <= max && value.isWellFormed());
+
+const isFiniteOrNull = (value: unknown): value is number | null => value === null || (typeof value === "number" && Number.isFinite(value));
 
 const isIntegerIn = (value: unknown, min: number, max: number): value is number =>
   typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
@@ -151,8 +173,35 @@ function toMediaRef(value: unknown, limits: ContractLimits, count: number): Medi
   };
 }
 
+// url da checagem: http(s), sem usuário e senha e na forma normalizada, como o fetcher envia.
+function isReviewUrl(value: unknown, maxLength: number): value is string | null {
+  if (value === null) return true;
+  if (!isHttpUrl(value, maxLength)) return false;
+  const { href, username, password } = new URL(value);
+  return href === value && username === "" && password === "";
+}
+
+function toClaimReview(value: unknown, limits: ContractLimits): ClaimReviewMark {
+  ensure(isPlainObject(value) && hasExactKeys(value, CLAIM_REVIEW_KEYS));
+  const { claimReviewed, ratingLabel, ratingValue, bestRating, worstRating, url, authorName, datePublished } = value;
+  ensure(isText(claimReviewed) && isText(ratingLabel) && isText(authorName) && isText(datePublished, MAX_DATE_LENGTH));
+  ensure(isFiniteOrNull(ratingValue) && isFiniteOrNull(bestRating) && isFiniteOrNull(worstRating));
+  ensure(isReviewUrl(url, limits.maxUrlLength));
+  return { claimReviewed, ratingLabel, ratingValue, bestRating, worstRating, url, authorName, datePublished };
+}
+
+// Ausente só durante a transição (PAGE_KEYS_BEFORE_CLAIM_REVIEWS): vira lista vazia.
+function parseClaimReviews(value: PlainObject, limits: ContractLimits): ClaimReviewMark[] {
+  if (!Object.hasOwn(value, "claimReviews")) return [];
+  const list = value["claimReviews"];
+  ensure(Array.isArray(list) && list.length <= limits.maxClaimReviews);
+  const marks: ClaimReviewMark[] = [];
+  for (let i = 0; i < list.length; i++) marks.push(toClaimReview(list[i], limits));
+  return marks;
+}
+
 function parsePage(value: PlainObject, limits: ContractLimits): Omit<FetchedPage, "downloads"> {
-  ensure(hasExactKeys(value, PAGE_KEYS));
+  ensure(hasExactKeys(value, PAGE_KEYS) || hasExactKeys(value, PAGE_KEYS_BEFORE_CLAIM_REVIEWS));
   const { finalUrl, title, headline, possiblyNeedsJavaScript, media } = value;
   ensure(isHttpUrl(finalUrl, limits.maxUrlLength) && isText(title) && isText(headline));
   ensure(typeof possiblyNeedsJavaScript === "boolean");
@@ -161,7 +210,7 @@ function parsePage(value: PlainObject, limits: ContractLimits): Omit<FetchedPage
   const refs: MediaRef[] = [];
   for (let i = 0; i < media.length; i++) refs.push(toMediaRef(media[i], limits, media.length));
   ensure(refs.filter((ref) => ref.selected).length <= limits.maxDownloads);
-  return { finalUrl, title, headline, possiblyNeedsJavaScript, media: refs };
+  return { finalUrl, title, headline, possiblyNeedsJavaScript, claimReviews: parseClaimReviews(value, limits), media: refs };
 }
 
 // Bytes decodificados linha a linha; o tamanho e o SHA-256 declarados precisam conferir.

@@ -166,3 +166,36 @@ export function singleMedia(metadata) {
   report.media = [{ ...report.media[0], metadata }];
   return report;
 }
+
+export const CLAIM_REVIEW_NOTICE_TEXT = "A página se apresenta como uma checagem. Isso não indica que a checagem esteja correta.";
+
+/**
+ * Marcação ClaimReview como a API a entrega em page.claimReviews (campos do exemplo da página
+ * oficial do Google, traduzidos). Inventada: não vem de um site real.
+ * @param {Record<string, unknown>} [overrides]
+ * @returns {Record<string, any>}
+ */
+export function claimReview(overrides = {}) {
+  return copy({
+    claimReviewed: "A Terra é plana",
+    ratingLabel: "Falso",
+    ratingValue: 1,
+    bestRating: 5,
+    worstRating: 1,
+    url: "https://checagem.example/terra-plana",
+    authorName: "Agência de Checagem",
+    datePublished: "2024-06-22",
+    ...overrides,
+  });
+}
+
+/**
+ * Exemplo de docs/api.md com `count` marcações distintas ("Afirmação 1", "Afirmação 2"...).
+ * @param {number} count
+ * @returns {RawReport}
+ */
+export function withClaimReviews(count) {
+  const json = apiExample();
+  json.page["claimReviews"] = Array.from({ length: count }, (_, i) => claimReview({ claimReviewed: `Afirmação ${i + 1}` }));
+  return json;
+}
