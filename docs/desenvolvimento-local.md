@@ -8,6 +8,8 @@ Todos os comandos deste arquivo são para o **Git Bash** (no Windows, nunca o Po
    `GOOGLE_CLIENT_ID=<id do cliente OAuth> PORT=8080 FETCHER_URL=http://localhost:8081 FETCHER_AUDIENCE=http://localhost:8081 EXIFTOOLS_API_KEY=<sua chave> npm start -w api`
 
    `EXIFTOOLS_API_KEY` é obrigatória: sem ela a API não sobe. Para testar só o login (`/api/me`), qualquer valor serve. `/healthz` e `/api/me` funcionam sem o fetcher no ar. Para `/api/check`, ver "API com o fetcher local".
+
+   `FACTCHECK_API_KEY` é **opcional**: sem ela, a API sobe normalmente e a seção de checagens publicadas aparece como "não está ativa neste ambiente" (status `not_configured`). Para testar a busca de verdade, acrescente `FACTCHECK_API_KEY=<sua chave>` ao comando.
 2. Terminal 2 (web + proxy): `npm run dev -w web`
 3. Abra `http://localhost:5000`.
 
@@ -138,7 +140,7 @@ Com isso, o `GoogleAuth` emite ID tokens da conta de serviço da API. No `google
 
    O token do usuário dura 1 hora. Não cole o token em lugar nenhum além do terminal. Guarde os `.json` de resposta fora do repositório.
 
-O fetcher faz requisições reais a partir da sua máquina (ver o aviso do `try-fetch`). Com `EXIFTOOLS_API_KEY` real, cada mídia baixada vai para a ExifTools de verdade, com custo e cota desconhecidos.
+O fetcher faz requisições reais a partir da sua máquina (ver o aviso do `try-fetch`). Com `EXIFTOOLS_API_KEY` real, cada mídia baixada vai para a ExifTools de verdade, com custo e cota desconhecidos. Com `FACTCHECK_API_KEY` real, **a manchete da página (ou o título) vai para o Google Fact Check Tools** a cada checagem.
 
 **Primeira chamada lenta:** localmente, a primeira chamada de cada processo da API levou cerca de 15 s, inclusive quando falhou; as seguintes, cerca de 150 ms. A causa provável é a primeira obtenção do token por impersonação. **Não investigado.** Ver a recomendação para o deploy em `docs/api.md`, "Chamada ao fetcher".
 
@@ -168,13 +170,13 @@ O fetcher faz requisições reais a partir da sua máquina (ver o aviso do `try-
 
 ### Segredos locais
 
-- Guarde a chave da ExifTools e o Client ID num arquivo **fora do repositório** (por exemplo `secrets.sh`, com linhas `export NOME="valor"`, sem espaço em volta do `=`) e carregue com `source <caminho>/secrets.sh` em cada janela. Nunca no `api/.env.example`.
-- Para conferir se a variável foi carregada, veja só o tamanho, nunca o valor: `echo ${#EXIFTOOLS_API_KEY}`.
+- Guarde a chave da ExifTools, a do Fact Check Tools (opcional) e o Client ID num arquivo **fora do repositório** (por exemplo `secrets.sh`, com linhas `export NOME="valor"`, sem espaço em volta do `=`) e carregue com `source <caminho>/secrets.sh` em cada janela. Nunca no `api/.env.example`.
+- Para conferir se a variável foi carregada, veja só o tamanho, nunca o valor: `echo ${#EXIFTOOLS_API_KEY}` (e `echo ${#FACTCHECK_API_KEY}`).
 - Para revogar a impersonação local: `gcloud auth application-default revoke`.
 
 ### `api/.env.example`
 
-Traz só os nomes das variáveis (`GOOGLE_CLIENT_ID`, `FETCHER_URL`, `FETCHER_AUDIENCE`, `EXIFTOOLS_API_KEY`), sem valores. Quem o mantém é o desenvolvedor; o agente não toca em arquivos `.env*`.
+Traz só os nomes das variáveis (`GOOGLE_CLIENT_ID`, `FETCHER_URL`, `FETCHER_AUDIENCE`, `EXIFTOOLS_API_KEY`), sem valores. Quem o mantém é o desenvolvedor; o agente não toca em arquivos `.env*`. Falta acrescentar a linha `FACTCHECK_API_KEY=` (opcional, Fase 5b), a cargo do desenvolvedor.
 
 **Decisão tomada:** o `api/.env.example` é versionado como modelo, só com os nomes e sem valores. O `.gitignore` tem `!.env.example` depois da regra `.env.*`, que antes também o ignorava.
 

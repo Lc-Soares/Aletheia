@@ -55,7 +55,7 @@ Uma verificação é uma única requisição, do login ao descarte dos dados. Na
 5. O fetcher baixa o HTML em memória, com limite de tamanho e de tempo.
 6. O fetcher extrai do HTML as mídias (img, srcset, video, source, og:image, og:video), o título ou manchete e as marcações ClaimReview em JSON-LD que a própria página declara (Fase 5a, `docs/fetcher.md`, "ClaimReview"). A marcação mostra que a página se apresenta como checagem, não que a checagem esteja correta.
 7. Cada mídia é baixada uma única vez pelo fetcher, com as mesmas validações da URL do usuário, limite de tamanho e lista de tipos permitidos, e o SHA-256 é calculado. Detalhes, limites e regras de implantação em `docs/fetcher.md`.
-8. As checagens rodam em paralelo: ExifTools (EXIF e C2PA), Cloud Vision (Web Detection), Web Risk (reputação da URL) e Fact Check (busca da afirmação extraída).
+8. As checagens rodam em paralelo: ExifTools (EXIF e C2PA), Cloud Vision (Web Detection), Web Risk (reputação da URL) e Fact Check Tools (busca pela manchete da página, ou pelo título; Fase 5b, `docs/api.md`, "Fact Check Tools"). A busca começa assim que a linha `page` do fetcher chega.
 9. O agregador junta os sinais e envia o resultado ao navegador. Na Fase 4, a resposta é um único JSON no fim da verificação (`docs/api.md`). O envio de cada resultado por SSE, assim que fica pronto, fica como melhoria futura opcional.
 10. O navegador monta o relatório e o usuário baixa PDF ou JSON.
 11. O servidor descarta tudo em um bloco finally. Nada vai para disco ou banco.
@@ -69,7 +69,7 @@ Cinco serviços externos alimentam o relatório; todas as chaves ficam no Secret
 | Serviço | Uso | Entrada e saída | Pontos a observar |
 | --- | --- | --- | --- |
 | API ExifTools | EXIF, IPTC, XMP, GPS e verificação C2PA | POST /extract com url, file ou data\_url (usamos só file, em multipart); devolve metadata e, quando há credenciais, o bloco contentCredentials | Chave no header X-API-Key (o parâmetro ?key= vaza em logs). Limite de 100 MB por envio. A documentação não informa limites de requisição, preço, retenção nem SLA. Resultados são recuperáveis por UUID, o que indica retenção do lado deles. |
-| Google Fact Check Tools | Achar checagens já publicadas sobre a afirmação | claims.search recebe o texto da afirmação | O recurso pages é para publicadores criarem marcação ClaimReview e não serve a este caso. |
+| Google Fact Check Tools | Achar checagens já publicadas sobre afirmações parecidas com a manchete | claims.search recebe a manchete da página (ou, sem ela, o título) como texto de busca; devolve afirmações e as checagens de terceiros sobre elas | Chave no header X-Goog-Api-Key, nunca em ?key=. API em v1alpha1 (alfa). A documentação não informa cota nem preço. O recurso pages é para publicadores criarem marcação ClaimReview e não serve a este caso. |
 | Cloud Vision, Web Detection | Busca reversa: onde a imagem já circulou | Imagem em bytes; devolve páginas e entidades correspondentes | Serviço pago: definir cota diária e alerta de orçamento antes de habilitar. |
 | Web Risk | Reputação da URL (malware, phishing) | URL; devolve ameaças conhecidas | A Safe Browsing gratuita é restrita a uso não comercial; confirmar os termos antes de escolher. |
 | Google Identity Services | Login | ID token JWT | O cliente OAuth deve listar apenas a origem exata do front-end. O MFA depende do que o usuário ativou na conta Google. |
@@ -101,7 +101,8 @@ O sistema não guarda o conteúdo analisado, mas ainda trata dados pessoais dura
 | Dado | Por onde passa | Retenção pelo sistema |
 | --- | --- | --- |
 | E-mail e identificador Google | Google (login) e API (validação do token) | Nenhuma além da requisição |
-| URL enviada pelo usuário | API, fetcher, Web Risk, Fact Check (texto extraído) | Nenhuma; não vai em log |
+| URL enviada pelo usuário | API, fetcher, Web Risk | Nenhuma; não vai em log |
+| Manchete (ou título) da página | API e Google Fact Check Tools (como texto de busca) | Nenhuma; não vai em log |
 | Mídia baixada da página (pode conter GPS e autor) | Memória da API, ExifTools, Cloud Vision | Nenhuma; descartada ao fim da requisição |
 | IP e dados técnicos da requisição | Cloud Run e Cloud Logging | Conforme configuração de logs (abaixo) |
 
@@ -170,6 +171,6 @@ A implementação segue sete fases, e cada uma só termina quando seus testes pa
 2. **Esqueleto seguro.** API no Cloud Run que valida o ID token do Google; front mínimo com login, cabeçalhos e CSP. Pronto quando um usuário logado chama uma rota protegida e um token inválido é recusado.
 3. **Fetcher seguro.** Validação de URL, proteção contra SSRF, extração de mídias, limites de tamanho e tempo. Pronto quando toda a bateria de testes de SSRF passa.
 4. **ExifTools e relatório.** Integração EXIF e C2PA, agregador de sinais e relatório em resposta JSON única (entregue na Fase 4; SSE como melhoria futura opcional). Pronto quando uma página real gera um relatório completo.
-5. **Demais checagens, uma por vez.** ClaimReview local (5a, feita), Fact Check, Web Risk e Cloud Vision, cada uma com sua chave, cota e alerta. Pronto quando cada plugin tem testes com respostas simuladas.
+5. **Demais checagens, uma por vez.** ClaimReview local (5a, feita), Fact Check (5b, feita), Web Risk e Cloud Vision, cada uma com sua chave, cota e alerta. Pronto quando cada plugin tem testes com respostas simuladas.
 6. **Lançamento limitado.** PDF, política de privacidade e termos publicados, revisão jurídica, teste dos limites de uso e do custo por verificação. Pronto quando o advogado aprova e o custo por verificação está dentro do orçamento.
 7. **Opcional.** Relatório assinado, análise de PDF e Office, plano B com ExifTool auto-hospedado.

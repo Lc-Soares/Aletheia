@@ -392,6 +392,10 @@ gcloud run services update-traffic <serviço> --region=${REGION} --to-revisions=
 
 Cuidado com a ordem. Depois que a API estrita estiver no ar (a que exige `claimReviews` na linha `page`), voltar o fetcher para uma revisão anterior à Fase 5a dá 502 em toda checagem. Nesse caso, volte a API junto.
 
+## Fase 5b: chave do Fact Check Tools (a implantar)
+
+A chave de API do Google Fact Check Tools vira o segredo `factcheck-api-key` no Secret Manager e entra na API por `--set-secrets=FACTCHECK_API_KEY=factcheck-api-key:latest`. O passo a passo ainda será escrito.
+
 ## Como retomar
 
 Para quem volta ao projeto (ou a uma conversa nova):
