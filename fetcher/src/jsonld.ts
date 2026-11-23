@@ -6,6 +6,9 @@
 // Campos e formato vêm da página oficial do Google (docs/apis/fact-check.md, seção 2): ClaimReview
 // com claimReviewed, reviewRating (Rating: alternateName, ou name na falta dele; ratingValue,
 // bestRating, worstRating), url, author e datePublished. Todo o resto é ignorado.
+// Fase 5a-2 (marcação real): a url pode vir relativa (resolvida contra a base da página, a mesma
+// das mídias) e as notas podem vir como texto numérico simples (a doc oficial pede só que "possam
+// ser avaliadas como número").
 import { type ClaimReviewMark, MAX_DATE_LENGTH, MAX_TEXT_LENGTH, normalizeText } from "./media.ts";
 
 export type JsonLdLimits = {
@@ -70,7 +73,22 @@ function isClaimReview(object: JsonObject): boolean {
 
 const text = (value: unknown, max: number = MAX_TEXT_LENGTH): string | null => (typeof value === "string" ? normalizeText(value, max) : null);
 
-const finite = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
+// Nota: number finito, ou texto numérico simples (sinal opcional, até 15 dígitos e 15 decimais com
+// ponto, só ASCII). Vírgula decimal, expoente, hexadecimal, NaN e Infinity ficam de fora.
+const MAX_NUMBER_TEXT = 32;
+const NUMBER_TEXT = /^[+-]?\d{1,15}(\.\d{1,15})?$/;
+function ratingNumber(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "string" || value.length > MAX_NUMBER_TEXT) return null;
+  const trimmed = value.trim();
+  if (!NUMBER_TEXT.test(trimmed)) return null;
+  const number = Number(trimmed);
+  return Number.isFinite(number) ? number : null;
+}
+
+// Valor cru da nota para o rascunho: número, ou texto curto (o corte mantém o texto grande inválido).
+const rawNumber = (value: unknown): number | string | null =>
+  typeof value === "number" ? value : typeof value === "string" ? value.slice(0, MAX_NUMBER_TEXT + 1) : null;
 
 // O objeto, ou o primeiro objeto de uma lista.
 function firstObject(value: unknown): JsonObject | null {
@@ -89,13 +107,14 @@ function authorName(value: unknown): string | null {
   return null;
 }
 
-// Só http(s) absoluta, sem usuário e senha, na forma normalizada. Nunca é buscada.
-function reviewUrl(value: unknown, maxLength: number): string | null {
-  if (typeof value !== "string") return null;
+// Resolvida contra a base da página (absoluta, relativa ou de protocolo relativo, como no
+// navegador); só http(s), sem usuário e senha, na forma normalizada. Nunca é buscada.
+function reviewUrl(value: string | null, base: string, maxLength: number): string | null {
+  if (value === null) return null;
   const trimmed = value.trim();
   if (trimmed === "" || trimmed.length > maxLength) return null;
   try {
-    const url = new URL(trimmed);
+    const url = new URL(trimmed, base);
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
     if (url.username !== "" || url.password !== "") return null;
     return url.href.length > maxLength ? null : url.href;
@@ -104,18 +123,41 @@ function reviewUrl(value: unknown, maxLength: number): string | null {
   }
 }
 
-function toMark(review: JsonObject, maxUrlLength: number): ClaimReviewMark {
+// Rascunho barato de uma marca: textos já normalizados, url e notas ainda cruas (cortadas). Serve
+// para descartar repetidas sem resolver url nem converter notas.
+type Draft = Omit<ClaimReviewMark, "url" | "ratingValue" | "bestRating" | "worstRating"> & {
+  url: string | null;
+  ratingValue: number | string | null;
+  bestRating: number | string | null;
+  worstRating: number | string | null;
+};
+
+function toDraft(review: JsonObject, maxUrlLength: number): Draft {
   const rating = firstObject(own(review, "reviewRating"));
   const ratingOwn = (key: string): unknown => (rating === null ? undefined : own(rating, key));
+  const url = own(review, "url");
   return {
     claimReviewed: text(own(review, "claimReviewed")),
     ratingLabel: text(ratingOwn("alternateName")) ?? text(ratingOwn("name")),
-    ratingValue: finite(ratingOwn("ratingValue")),
-    bestRating: finite(ratingOwn("bestRating")),
-    worstRating: finite(ratingOwn("worstRating")),
-    url: reviewUrl(own(review, "url"), maxUrlLength),
+    ratingValue: rawNumber(ratingOwn("ratingValue")),
+    bestRating: rawNumber(ratingOwn("bestRating")),
+    worstRating: rawNumber(ratingOwn("worstRating")),
+    // O corte em maxUrlLength + 1 mantém a url longa demais como longa demais.
+    url: typeof url === "string" ? url.slice(0, maxUrlLength + 1) : null,
     authorName: authorName(own(review, "author")),
+    // Só a data da raiz: a de itemReviewed é a da afirmação, não a da checagem.
     datePublished: text(own(review, "datePublished"), MAX_DATE_LENGTH),
+  };
+}
+
+// A parte que custa: resolver a url e converter as notas. Só roda nas marcas que podem entrar.
+function toMark(draft: Draft, base: string, maxUrlLength: number): ClaimReviewMark {
+  return {
+    ...draft,
+    ratingValue: ratingNumber(draft.ratingValue),
+    bestRating: ratingNumber(draft.bestRating),
+    worstRating: ratingNumber(draft.worstRating),
+    url: reviewUrl(draft.url, base, maxUrlLength),
   };
 }
 
@@ -148,21 +190,32 @@ function visitClaimReviews(root: unknown, limits: JsonLdLimits, onFound: (review
 }
 
 // Marcações ClaimReview dos blocos, na ordem do documento: sem repetidas (todos os campos iguais),
-// até maxClaimReviews no total. Só os primeiros maxJsonLdBlocks blocos são lidos.
-export function readClaimReviews(blocks: readonly string[], limits: JsonLdLimits): ClaimReviewMark[] {
+// até maxClaimReviews no total. Só os primeiros maxJsonLdBlocks blocos são lidos. `base` é a base
+// da página (o <base href> válido, senão a URL final), a mesma que resolve as mídias.
+// Teto antes do trabalho: um rascunho repetido é descartado sem resolver nada, e no máximo
+// maxClaimReviews marcas são finalizadas (url resolvida e notas convertidas). Rascunhos diferentes
+// que dão a mesma marca (por exemplo "/c/" e a mesma url absoluta) gastam uma vaga e saem repetidos.
+export function readClaimReviews(blocks: readonly string[], base: string, limits: JsonLdLimits): ClaimReviewMark[] {
   const found: ClaimReviewMark[] = [];
-  const seen = new Set<string>();
+  const seenDrafts = new Set<string>();
+  const seenMarks = new Set<string>();
+  let finished = 0;
   const onFound = (review: JsonObject): boolean => {
-    const mark = toMark(review, limits.maxUrlLength);
+    const draft = toDraft(review, limits.maxUrlLength);
+    const draftKey = JSON.stringify(draft);
+    if (seenDrafts.has(draftKey)) return true;
+    seenDrafts.add(draftKey);
+    finished++;
+    const mark = toMark(draft, base, limits.maxUrlLength);
     const key = JSON.stringify(mark);
-    if (!seen.has(key)) {
-      seen.add(key);
+    if (!seenMarks.has(key)) {
+      seenMarks.add(key);
       found.push(mark);
     }
-    return found.length < limits.maxClaimReviews;
+    return finished < limits.maxClaimReviews;
   };
   for (const block of blocks.slice(0, limits.maxJsonLdBlocks)) {
-    if (found.length >= limits.maxClaimReviews) break;
+    if (finished >= limits.maxClaimReviews) break;
     visitClaimReviews(parseBlock(block, limits), limits, onFound);
   }
   return found;
