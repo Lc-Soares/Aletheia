@@ -266,7 +266,7 @@ Fase 5b. `api/src/factcheck-client.ts`, `api/src/factcheck-response.ts` e `api/s
 ### Cliente
 
 - **Endereço fixo:** `GET https://factchecktools.googleapis.com/v1alpha1/claims:search`, com corpo vazio e só os parâmetros `query` e `pageSize=10`, montados com `URLSearchParams` (acentos, `&`, `#` e espaços vão codificados). Sem variável de ambiente para trocar o destino. A URL da página nunca é enviada.
-- **Chave só no cabeçalho `X-Goog-Api-Key`**, nunca em `?key=`. O cabeçalho está nos parâmetros de sistema das APIs do Google Cloud, e a página de chaves avisa que a chave na URL fica exposta. A página do Fact Check não documenta a autenticação; o uso real do cabeçalho será confirmado no primeiro deploy (`docs/pendencias.md`).
+- **Chave só no cabeçalho `X-Goog-Api-Key`**, nunca em `?key=`. O cabeçalho está nos parâmetros de sistema das APIs do Google Cloud, e a página de chaves avisa que a chave na URL fica exposta. A página do Fact Check não documenta a autenticação; o uso do cabeçalho foi confirmado na prática em 22/11/2026 (`docs/deploy.md`, "Atualização de 22/11/2026 (Fase 5b: Fact Check Tools)").
   - A chave vem de `FACTCHECK_API_KEY`, **opcional**: sem ela, o status é `not_configured`, nenhuma requisição é feita e a checagem segue normal.
   - A chave nunca aparece em log, resultado ou mensagem de erro.
 - **Redirecionamento:** não é seguido (`redirect: "manual"`), porque a chave iria junto.

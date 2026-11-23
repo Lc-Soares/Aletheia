@@ -26,19 +26,20 @@ Lista única do que falta, atualizada em **22/11/2026**, após o deploy da Fase 
 - **PDF do relatório**, gerado no navegador (`docs/arquitetura.md`). O JSON e a interface do relatório já existem.
 - **Fase 5**, uma de cada vez, com PR e teste próprios, nesta ordem:
   - 5a. ClaimReview em JSON-LD na própria página (sem chave). **Implementada** (`docs/fetcher.md`, "ClaimReview"). Falta:
-    - testar com uma página real que tenha ClaimReview (só foi testado com fixtures a partir dos exemplos da página oficial);
+    - **marcação real difere da doc oficial** (vista em 23/11/2026 numa matéria do Estadão Verifica): a `url` veio como caminho **relativo** (nossa leitura exige http(s) absoluta e devolveu `null`), e `ratingValue`, `bestRating` e `worstRating` vieram como **texto** ("1", "4"), embora a doc oficial diga número (nossa leitura só aceita número e devolveu `null`). O `datePublished` da raiz não existe nessa marcação: a data que existe está dentro de `itemReviewed` e é a da afirmação, que **não** usamos como data da checagem. Ajuste planejado na tarefa 5a-2, ainda não implementado;
     - A URL da checagem declarada é um link para site de terceiro, que pode apontar para phishing; a proteção real vem com o Web Risk (5c).
   - 5b. Fact Check Tools (`claims.search`), com chave de API restrita a essa API. O texto da busca é a manchete da página, ou o título sem ela (decidido em 22/11/2026). **Implementada** (`docs/api.md`, "Fact Check Tools"). Falta:
-    - criar o segredo `factcheck-api-key` e implantar a API (`docs/deploy.md`, "Fase 5b"); o passo a passo ainda será escrito;
-    - conferir no primeiro deploy que a chave no cabeçalho `X-Goog-Api-Key` é aceita: a página do Fact Check não documenta a autenticação, e o cabeçalho vem da documentação geral do Google Cloud. `http_403` no campo `factCheck` do log indica chave recusada ou API desativada;
+    - chave no cabeçalho `X-Goog-Api-Key`: confirmado na prática em 22/11/2026 (primeira chamada real: ok; `docs/deploy.md`, "Atualização de 22/11/2026 (Fase 5b: Fact Check Tools)");
     - cota vista no console em 22/11/2026: 300 requisições por minuto (AllRequests per minute, projeto inteiro). A tela não mostra limite diário nem preço; o preço segue sem confirmação oficial;
     - a API é v1alpha1 (alfa) e pode mudar sem aviso; campos desconhecidos já são ignorados;
     - falsos casamentos da manchete ainda não medidos: a busca devolve afirmações parecidas, que podem não ser a mesma;
-    - linha `FACTCHECK_API_KEY=` no `api/.env.example`, a cargo do desenvolvedor.
+    - a consulta é a manchete com o sufixo do site quando ele vem no og:title (por exemplo "... | G1"). Remover o sufixo depois de " | " ou " - " pode melhorar o casamento. Sem prioridade.
   - 5b-2. `imageSearch` (checagens por imagem), depois da 5b. A própria documentação avisa: "You should not depend on externally-hosted images for production applications." Além disso, o `imageUri` faria o Google buscar a imagem por conta própria (fora do fetcher), o que precisa de decisão de privacidade antes;
   - 5c. Web Risk, com conta de serviço e faturamento. **Ler os termos de uso comercial/sem fins lucrativos antes**;
   - 5d. Cloud Vision (Web Detection), pago. **Definir cota e alerta de orçamento antes.**
-- **Fase 6:** lançamento limitado (`docs/arquitetura.md`, plano de fases).
+- **Fase 6:** lançamento limitado (`docs/arquitetura.md`, plano de fases). Antes dele:
+  - revisar as restrições da "Browser key (auto created by Firebase)", que tem 25 APIs;
+  - o `authorName` de uma pessoa (assinatura pública da matéria) é exibido como "Quem publicou a checagem (declarado)". Decisão do usuário em 23/11/2026: manter como está. Incluir na revisão jurídica (política de privacidade, dados de terceiros) e reavaliar a opção de ocultar.
 
 ## Validação pendente
 
@@ -55,10 +56,10 @@ Lista única do que falta, atualizada em **22/11/2026**, após o deploy da Fase 
   - mídia dentro de `<noscript>` (`docs/fetcher.md`, "Decisões abertas").
 - **Dívida técnica:** criar um workspace compartilhado para o código duplicado entre API e fetcher (`docs/fetcher.md`, "Dívida técnica").
 - **Geocodificação pela ExifTools:** saber se ela usa um terceiro para gerar `address`/`addressPlusCode`. Revisão jurídica (`docs/arquitetura.md`; nota 9 de `docs/politica-privacidade.md`).
-- **Caminhos com sinal da ExifTools não exercitados.** Os testes reais só trouxeram imagens de CDN sem metadados (todos os sinais vazios). Falta uma página HTML de teste, controlada pela equipe, com uma imagem com EXIF e GPS, uma com autoria e uma com C2PA. O fetcher analisa páginas HTML, então uma URL direta de imagem provavelmente não serve para esse teste (confirmar em `fetcher/src/safe-fetch.ts`). Hospedagem da página a decidir; sugestão: um segundo site do Firebase Hosting. Ver `docs/deploy.md`, Etapa 5. A mesma página de teste deve levar também um ClaimReview em JSON-LD, porque a Fase 5a ainda não foi validada com uma página real (ver o item da 5a em "Próximas fases").
+- **Caminhos com sinal da ExifTools não exercitados.** Os testes reais só trouxeram imagens de CDN sem metadados (todos os sinais vazios). Falta uma página HTML de teste, controlada pela equipe, com uma imagem com EXIF e GPS, uma com autoria e uma com C2PA. O fetcher analisa páginas HTML, então uma URL direta de imagem provavelmente não serve para esse teste (confirmar em `fetcher/src/safe-fetch.ts`). Hospedagem da página a decidir; sugestão: um segundo site do Firebase Hosting. Ver `docs/deploy.md`, Etapa 5. Como cenário extra, a mesma página pode levar também um ClaimReview em JSON-LD.
 - **Teste intermitente do CI:** `fetcher/src/server.test.ts`, "prazo total" (`durationMs >= 400`, e o irmão de "inatividade", `>= 300`). `durationMs` é `Math.round(performance.now() - started)`, e os timers do Node podem disparar alguns milissegundos antes. Falhou uma vez no CI em 22/11/2026 e passou na segunda execução. Se voltar a falhar, trocar por uma tolerância de 50 ms.
 - **9 vulnerabilidades moderadas, só em dependências de desenvolvimento:** minimatch 7.0.0 a 11.0.0, via ESLint e typescript-eslint (GHSA-g3hv-75wg-m249). O `npm audit --omit=dev` dá 0, e o CI só reprova a partir de "high". Reavaliar quando houver uma versão corrigida do ESLint que respeite o `min-release-age=7`.
-- **Seleção de mídias.** Imagens genéricas do site ocupam vagas das 8 analisadas: um `grey-placeholder.png` de 501 bytes e um `poster-1024x576.png` de metadados apareceram como grupo 1. Avaliar ignorar imagens minúsculas ou conhecidas como genéricas (`docs/fetcher.md`).
+- **Seleção de mídias.** Imagens genéricas do site ocupam vagas das 8 analisadas: um `grey-placeholder.png` de 501 bytes e um `poster-1024x576.png` de metadados apareceram como grupo 1. Avaliar ignorar imagens minúsculas ou conhecidas como genéricas (`docs/fetcher.md`). Numa matéria real, um botão promocional e o avatar de 60x60 do autor também foram selecionados: avaliar rebaixar mídias com dimensão real pequena (por exemplo, até 100 px) depois do download, usando a largura e a altura que a ExifTools devolve.
 - **Rota de saúde.** `/healthz` devolve 404 do Cloud Run quando chamado de fora (hipótese: caminho interceptado). Se for preciso um teste de saúde externo, renomear para `/health`. Sem urgência (`docs/deploy.md`, 3.5).
 - **HSTS.** O Hosting aplica o próprio valor; a linha de `Strict-Transport-Security` do `firebase.json` provavelmente não tem efeito. Avaliar remover (`docs/deploy.md`, 4.5).
 - **Nome do arquivo do relatório JSON** usa horário UTC (cosmético).
