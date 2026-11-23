@@ -502,12 +502,14 @@ export function extractPage(
 ): ExtractedPage {
   const jsonLd = jsonLdLimits(limits);
   const found = walk(parse(htmlText), limits, jsonLd);
-  const listed = listRefs(found, resolveBase(found.baseHref, pageUrl), limits);
+  // A mesma base resolve as mídias e a url relativa de um ClaimReview.
+  const base = resolveBase(found.baseHref, pageUrl);
+  const listed = listRefs(found, base, limits);
   for (const ref of listed) ref.root = findGroup(found.groups, ref.root);
   const maxSelected = limits.maxSelectedMedia ?? DEFAULT_LIMITS.maxSelectedMedia;
   const media = selectMedia(listed, (root) => found.groups.signals[root] ?? 0, maxSelected);
   const possiblyNeedsJavaScript =
     media.length === 0 && found.visibleChars < VISIBLE_TEXT_THRESHOLD && (found.hasScript || found.emptyMount);
-  const claimReviews = readClaimReviews(found.jsonLd.texts, jsonLd);
+  const claimReviews = readClaimReviews(found.jsonLd.texts, base, jsonLd);
   return { title: found.title, headline: found.ogTitle ?? found.h1, media, possiblyNeedsJavaScript, claimReviews };
 }
