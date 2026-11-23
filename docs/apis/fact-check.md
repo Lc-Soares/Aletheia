@@ -38,6 +38,11 @@ O que a página informa:
 - Campos recomendados: `author`, `itemReviewed` (objeto Claim com autor, data e onde a afirmação apareceu) e, na avaliação, `bestRating`, `worstRating` e `ratingValue`.
 - O exemplo da página usa JSON-LD.
 - O Google avisa que está desativando o suporte a esse resultado na Pesquisa, mas a marcação continua funcionando no Fact Check Explorer. Portanto, sites podem manter ou remover a marcação, e a **ausência dela não diz nada**.
+- Relido em 23/11/2026:
+  - `url` (`https://schema.org/URL`): "Link to the page hosting the full article of the fact check." e "The domain of this URL value must be the same domain as, or a subdomain of, the page hosting this ClaimReview element." A página **não fala de URL relativa**.
+  - `ratingValue`, `bestRating` e `worstRating` (`https://schema.org/Number`): "The numeric rating must be able to be evaluated as a number." e "Must be able to be evaluated as a number." A página **não fala de número em texto**.
+
+**A marcação real difere da documentação oficial.** Uma marcação real de um site de checagem, vista em 23/11/2026, trouxe a `url` como caminho relativo e as três notas como texto ("1", "4"). A única data estava dentro de `itemReviewed` (a da afirmação), sem `datePublished` na raiz. Como o fetcher lê cada um desses pontos: `docs/fetcher.md`, "ClaimReview" (Fase 5a-2).
 
 Regras de segurança para este projeto:
 - Qualquer site pode escrever ClaimReview, então trate o conteúdo como entrada não confiável: escape tudo e mostre sempre a fonte.

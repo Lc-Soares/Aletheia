@@ -85,8 +85,8 @@ Fase 5a. O fetcher lê o JSON-LD da página (`docs/fetcher.md`, "ClaimReview") e
 | --- | --- | --- |
 | `claimReviewed` | `claimReviewed` | texto, até 300 |
 | `ratingLabel` | `reviewRating.alternateName`, ou `reviewRating.name` na falta dele | texto, até 300 |
-| `ratingValue`, `bestRating`, `worstRating` | os de `reviewRating` | número finito, ou `null` se vier como texto ou faltar |
-| `url` | `url` | http(s) absoluta, sem usuário e senha, normalizada; senão `null`. **Nunca é buscada** |
+| `ratingValue`, `bestRating`, `worstRating` | os de `reviewRating` | número finito; texto numérico simples (`"1"`, `" 4 "`) vira número; senão `null` (regra exata em `docs/fetcher.md`, "ClaimReview") |
+| `url` | `url` | resolvida contra a base da página (a mesma das mídias); http(s), sem usuário e senha, normalizada; senão `null`. **Nunca é buscada** |
 | `authorName` | `author` (texto, `author.name` ou o primeiro nome de uma lista) | texto, até 300 |
 | `datePublished` | `datePublished` da raiz (data da checagem) | texto, até 64 |
 
