@@ -130,6 +130,13 @@ describe("JSON-LD hostil de ponta a ponta (ClaimReview)", () => {
     assertResponsive(observed, t);
   });
 
+  test("milhares de ClaimReview com url relativa e nota em texto (5a-2): só 5 viram marca, dentro do prazo", { timeout: 60_000 }, async (t) => {
+    const graph = JSON.stringify({ "@graph": Array.from({ length: 2_500 }, (_, i) => ({ "@type": "ClaimReview", url: `/${i}`, reviewRating: { ratingValue: "1" } })) });
+    const observed = await attack(fill(ldScript(graph)));
+    assert.equal(observed.status, 200);
+    assertResponsive(observed, t);
+  });
+
   test("aninhamento profundo em vários blocos é recusado pela pré-varredura, dentro do prazo", { timeout: 60_000 }, async (t) => {
     const observed = await attack(fill(ldScript("[".repeat(250_000))));
     assert.equal(observed.status, 200);

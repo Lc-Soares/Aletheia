@@ -274,6 +274,35 @@ export const OFFICIAL_CLAIMREVIEW_MARK = Object.freeze({
   datePublished: null,
 });
 
+// Mesma ESTRUTURA de uma marcação real vista em 23/11/2026 numa matéria de checagem (Fase 5a-2),
+// com todos os valores trocados por exemplos: nenhum nome, texto ou URL reais. Difere da página
+// oficial em dois pontos: url relativa e notas em texto. A data só existe dentro de itemReviewed
+// (é a da afirmação) e nunca vira datePublished.
+export const REAL_STRUCTURE_PAGE = "https://exemplo.invalid/materia";
+export const REAL_STRUCTURE_CLAIMREVIEW = JSON.stringify({
+  "@context": "https://schema.org",
+  "@type": "ClaimReview",
+  claimReviewed: "Afirmação de exemplo",
+  url: "/checagens/exemplo/",
+  itemReviewed: {
+    "@type": "Claim",
+    author: { "@type": "Organization", name: "Organização Exemplo" },
+    datePublished: "2026-01-08T16:09:24.313Z",
+  },
+  author: { "@type": "Person", name: "Pessoa Exemplo" },
+  reviewRating: { "@type": "Rating", ratingValue: "1", bestRating: "4", worstRating: "1", alternateName: "Falso" },
+});
+export const REAL_STRUCTURE_MARK = Object.freeze({
+  claimReviewed: "Afirmação de exemplo",
+  ratingLabel: "Falso",
+  ratingValue: 1,
+  bestRating: 4,
+  worstRating: 1,
+  url: "https://exemplo.invalid/checagens/exemplo/",
+  authorName: "Pessoa Exemplo",
+  datePublished: null,
+});
+
 // Bloco <script type="application/ld+json"> com o texto dado (sem escapar nada: o teste escolhe).
 export const ldScript = (json: string, type = "application/ld+json"): string => `<script type="${type}">${json}</script>`;
 

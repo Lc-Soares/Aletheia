@@ -4,7 +4,15 @@ import { describe, test } from "node:test";
 import { extractPage } from "./extract.ts";
 import { exceedsDepth, readClaimReviews } from "./jsonld.ts";
 import { DEFAULT_LIMITS } from "./limits.ts";
-import { ldScript, OFFICIAL_CLAIMREVIEW, OFFICIAL_CLAIMREVIEW_LEGACY, OFFICIAL_CLAIMREVIEW_MARK } from "./testing.ts";
+import {
+  ldScript,
+  OFFICIAL_CLAIMREVIEW,
+  OFFICIAL_CLAIMREVIEW_LEGACY,
+  OFFICIAL_CLAIMREVIEW_MARK,
+  REAL_STRUCTURE_CLAIMREVIEW,
+  REAL_STRUCTURE_MARK,
+  REAL_STRUCTURE_PAGE,
+} from "./testing.ts";
 
 const PAGE = "https://checagem.example/materia";
 const reviews = (htmlText: string) => extractPage(htmlText, PAGE).claimReviews;
@@ -116,9 +124,9 @@ describe("ClaimReview: campos", () => {
     assert.deepEqual(reviews(ldScript('{"@type":"ClaimReview"}')), [EMPTY_MARK]);
   });
 
-  test("números só quando são number finito", () => {
+  test("números: number finito ou texto numérico simples (\"1\" vira 1); Infinity continua null", () => {
     const json = OFFICIAL_CLAIMREVIEW.replace('"ratingValue": 1', '"ratingValue": "1"').replace('"bestRating": 5', '"bestRating": 1e999');
-    assert.deepEqual(reviews(ldScript(json)), [mark({ ratingValue: null, bestRating: null })]);
+    assert.deepEqual(reviews(ldScript(json)), [mark({ ratingValue: 1, bestRating: null })]);
   });
 
   test("sem alternateName, o rótulo vem de reviewRating.name; com os dois, vale alternateName", () => {
@@ -142,11 +150,13 @@ describe("ClaimReview: campos", () => {
     for (const value of [42, null, { url: "https://x.example/" }, [], "   "]) assert.equal(author(value), null, JSON.stringify(value));
   });
 
-  test("url da checagem: só http(s) absoluta, sem usuário e senha, normalizada", () => {
+  test("url da checagem: resolvida contra a base da página; só http(s), sem usuário e senha, normalizada", () => {
     const url = (value: unknown) => reviews(ldScript(JSON.stringify({ "@type": "ClaimReview", url: value })))[0]?.url;
     assert.equal(url(" HTTPS://Checagem.Example/a b "), "https://checagem.example/a%20b");
     assert.equal(url("http://checagem.example"), "http://checagem.example/");
-    for (const value of ["/relativa", "checagem.example/x", "javascript:alert(1)", "data:text/html,x", "ftp://x.example/", "https://u:p@x.example/", 42, `https://x.example/${"a".repeat(2048)}`]) {
+    assert.equal(url("/relativa"), "https://checagem.example/relativa");
+    assert.equal(url("checagem.example/x"), "https://checagem.example/checagem.example/x", "sem esquema é caminho relativo, como no navegador");
+    for (const value of ["javascript:alert(1)", "data:text/html,x", "ftp://x.example/", "https://u:p@x.example/", 42, `https://x.example/${"a".repeat(2048)}`]) {
       assert.equal(url(value), null, String(value).slice(0, 40));
     }
   });
@@ -298,8 +308,144 @@ describe("ClaimReview: HTML e JSON hostis", () => {
 
   test("readClaimReviews direto: bloco a mais que o teto é ignorado, entrada não confiável não lança", () => {
     const blocks = [...Array.from({ length: 25 }, () => "{}"), OFFICIAL_CLAIMREVIEW];
-    assert.deepEqual(readClaimReviews(blocks, DEFAULT_LIMITS), []);
-    assert.deepEqual(readClaimReviews(["", " ", "\u0000", "{", "]"], DEFAULT_LIMITS), []);
-    assert.deepEqual(readClaimReviews([OFFICIAL_CLAIMREVIEW], DEFAULT_LIMITS), [OFFICIAL_CLAIMREVIEW_MARK]);
+    assert.deepEqual(readClaimReviews(blocks, PAGE, DEFAULT_LIMITS), []);
+    assert.deepEqual(readClaimReviews(["", " ", "\u0000", "{", "]"], PAGE, DEFAULT_LIMITS), []);
+    assert.deepEqual(readClaimReviews([OFFICIAL_CLAIMREVIEW], PAGE, DEFAULT_LIMITS), [OFFICIAL_CLAIMREVIEW_MARK]);
+  });
+});
+
+describe("ClaimReview: marcação com a estrutura real (5a-2)", () => {
+  const real = (): Record<string, unknown> => JSON.parse(REAL_STRUCTURE_CLAIMREVIEW) as Record<string, unknown>;
+  const at = (htmlText: string, page = REAL_STRUCTURE_PAGE) => extractPage(htmlText, page).claimReviews;
+  const withUrl = (url: unknown) => ldScript(JSON.stringify({ ...real(), url }));
+
+  test("url relativa resolvida contra a página, notas em texto convertidas, nada de itemReviewed", () => {
+    const found = at(ldScript(REAL_STRUCTURE_CLAIMREVIEW));
+    assert.deepEqual(found, [REAL_STRUCTURE_MARK]);
+    const text = JSON.stringify(found);
+    for (const absent of ["Organização Exemplo", "2026-01-08"]) assert.equal(text.includes(absent), false, `não deveria sair: ${absent}`);
+  });
+
+  test("url relativa com <base href>: a mesma base das mídias", () => {
+    const sameSite = `<base href="https://exemplo.invalid/secao/">${withUrl("checagem/")}<img src="foto.jpg">`;
+    const page = extractPage(sameSite, REAL_STRUCTURE_PAGE);
+    assert.equal(page.claimReviews[0]?.url, "https://exemplo.invalid/secao/checagem/");
+    assert.equal(page.media[0]?.url, "https://exemplo.invalid/secao/foto.jpg");
+    // <base href> de outro domínio: vale para a url como vale para as mídias (a página já poderia
+    // declarar uma url absoluta em qualquer domínio; o texto do link é sempre a url completa).
+    assert.equal(at(`<base href="https://outro.invalid/">${withUrl("/c/")}`)[0]?.url, "https://outro.invalid/c/");
+  });
+
+  test("<base href> que não é http(s) ou é inválido: volta para a url da página", () => {
+    for (const base of ["javascript:alert(1)", "data:text/html,x", "http://[invalido"]) {
+      assert.equal(at(`<base href="${base}">${withUrl("/c/")}`)[0]?.url, "https://exemplo.invalid/c/", base);
+    }
+  });
+
+  test("protocolo relativo, query e fragmento: resolvidos como no navegador", () => {
+    assert.equal(at(withUrl("//outro.invalid/x"))[0]?.url, "https://outro.invalid/x");
+    assert.equal(at(withUrl("?id=1"))[0]?.url, "https://exemplo.invalid/materia?id=1");
+    assert.equal(at(withUrl("/c/#parte"))[0]?.url, "https://exemplo.invalid/c/#parte");
+    assert.equal(at(withUrl("//outro.invalid/x"), "http://exemplo.invalid/materia")[0]?.url, "http://outro.invalid/x");
+  });
+
+  test("javascript:, data:, credenciais e outros esquemas continuam null, mesmo relativos à base", () => {
+    for (const url of ["javascript:alert(1)", " JavaScript:alert(1)", "data:text/html,x", "vbscript:x", "ftp://x.invalid/", "//u:p@outro.invalid/", "https://u@x.invalid/", "", "   "]) {
+      assert.equal(at(withUrl(url))[0]?.url, null, url);
+    }
+  });
+
+  test("url que só passa do teto depois de resolvida vira null; url enorme nem é resolvida", () => {
+    const path = `/${"a".repeat(2048 - "https://exemplo.invalid/".length + 1)}`;
+    assert.ok(path.length <= 2048);
+    assert.equal(at(withUrl(path))[0]?.url, null);
+    assert.equal(at(withUrl(`/${"a".repeat(100_000)}`))[0]?.url, null);
+  });
+
+  test("notas: texto numérico simples vira número; o resto continua null", () => {
+    const rating = (value: unknown) => at(ldScript(JSON.stringify({ ...real(), reviewRating: { alternateName: "Falso", ratingValue: value } })))[0]?.ratingValue;
+    const accepted: Array<[unknown, number]> = [
+      ["1", 1],
+      [" 4 ", 4],
+      ["007", 7],
+      ["-1", -1],
+      ["+2", 2],
+      ["4.0", 4],
+      ["2.5", 2.5],
+      [3, 3],
+      [0.5, 0.5],
+    ];
+    for (const [value, expected] of accepted) assert.equal(rating(value), expected, JSON.stringify(value));
+    const rejected: unknown[] = ["", "  ", "1,5", "1.", ".5", "1e3", "0x10", "NaN", "Infinity", "-Infinity", "1 2", "um", "４", "1".repeat(16), "1".repeat(100_000), true, [], {}, null];
+    for (const value of rejected) assert.equal(rating(value), null, JSON.stringify(value).slice(0, 40));
+  });
+
+  test("bestRating e worstRating seguem a mesma regra", () => {
+    const found = at(ldScript(JSON.stringify({ ...real(), reviewRating: { ratingValue: "2", bestRating: "5", worstRating: "x" } })));
+    assert.deepEqual([found[0]?.ratingValue, found[0]?.bestRating, found[0]?.worstRating], [2, 5, null]);
+  });
+
+  test("a data de itemReviewed (da afirmação) e a do NewsArticle nunca viram datePublished", () => {
+    assert.equal(at(ldScript(REAL_STRUCTURE_CLAIMREVIEW))[0]?.datePublished, null);
+    const graph = JSON.stringify({ "@graph": [{ "@type": "NewsArticle", datePublished: "2026-01-09T10:00:00Z" }, real()] });
+    assert.equal(at(ldScript(graph))[0]?.datePublished, null);
+    const nested = JSON.stringify({ "@type": "NewsArticle", datePublished: "2026-01-09T10:00:00Z", review: real() });
+    assert.equal(at(ldScript(nested))[0]?.datePublished, null);
+    assert.equal(at(ldScript(JSON.stringify({ ...real(), datePublished: "2026-01-10" })))[0]?.datePublished, "2026-01-10", "só a da raiz vale");
+  });
+});
+
+describe("ClaimReview: o teto vem antes de resolver a url e converter as notas", () => {
+  // Conta as construções de URL feitas por readClaimReviews. Cada marca montada com url em texto
+  // resolve a url uma vez, e as notas são convertidas no mesmo passo: contar as URLs conta as marcas.
+  function countingUrls<T>(run: () => T): { result: T; calls: number } {
+    const Original = globalThis.URL;
+    let calls = 0;
+    class Counting extends Original {
+      constructor(url: string | URL, base?: string | URL) {
+        calls++;
+        super(url, base);
+      }
+    }
+    globalThis.URL = Counting as typeof URL;
+    try {
+      return { result: run(), calls };
+    } finally {
+      globalThis.URL = Original;
+    }
+  }
+  const claim = (i: number) => ({ "@type": "ClaimReview", claimReviewed: `Afirmação ${i}`, url: `/c/${i}`, reviewRating: { ratingValue: `${i % 5}` } });
+
+  test("5 000 marcas distintas num @graph: no máximo 5 resolvidas, e termina rápido", () => {
+    // Marcas curtas, para as 5 000 caberem num bloco que é lido (256 Ki).
+    const block = JSON.stringify({ "@graph": Array.from({ length: 5_000 }, (_, i) => ({ "@type": "ClaimReview", url: `/${i}` })) });
+    assert.ok(block.length <= DEFAULT_LIMITS.maxJsonLdBlockChars, "o bloco precisa ser lido");
+    const started = performance.now();
+    const { result, calls } = countingUrls(() => readClaimReviews([block], REAL_STRUCTURE_PAGE, DEFAULT_LIMITS));
+    assert.equal(result.length, 5);
+    assert.ok(calls <= 5, `${calls} resoluções de url`);
+    assert.ok(performance.now() - started < 500);
+  });
+
+  test("milhares de marcas idênticas: uma só resolvida", () => {
+    const block = JSON.stringify(Array.from({ length: 1_500 }, () => claim(1)));
+    const { result, calls } = countingUrls(() => readClaimReviews([block], REAL_STRUCTURE_PAGE, DEFAULT_LIMITS));
+    assert.equal(result.length, 1);
+    assert.ok(calls <= 1, `${calls} resoluções de url`);
+  });
+
+  test("urls diferentes que resolvem para a mesma: ainda no máximo 5 resolvidas, sem repetir a marca", () => {
+    const variants = ["/c/", "https://exemplo.invalid/c/", "//exemplo.invalid/c/", "../c/", "./../c/", " /c/ ", "/./c/", "/c/./"];
+    const block = JSON.stringify(variants.flatMap((url) => Array.from({ length: 200 }, () => ({ "@type": "ClaimReview", url }))));
+    const { result, calls } = countingUrls(() => readClaimReviews([block], REAL_STRUCTURE_PAGE, DEFAULT_LIMITS));
+    assert.deepEqual(result.map((mark) => mark.url), ["https://exemplo.invalid/c/"]);
+    assert.ok(calls <= 5, `${calls} resoluções de url`);
+  });
+
+  test("20 blocos com @graph cheio: no máximo 5 resolvidas no total", () => {
+    const blocks = Array.from({ length: 20 }, (_, b) => JSON.stringify({ "@graph": Array.from({ length: 1_000 }, (_, i) => claim(b * 1_000 + i)) }));
+    const { result, calls } = countingUrls(() => readClaimReviews(blocks, REAL_STRUCTURE_PAGE, DEFAULT_LIMITS));
+    assert.equal(result.length, 5);
+    assert.ok(calls <= 5, `${calls} resoluções de url`);
   });
 });
