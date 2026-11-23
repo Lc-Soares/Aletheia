@@ -256,8 +256,10 @@ gcloud run deploy aletheia-api --image=southamerica-east1-docker.pkg.dev/${PROJE
 **Trocar a versão do segredo.** Para apontar a API para uma versão específica (o que também força uma revisão nova, que lê o segredo de novo):
 
 ```
-gcloud run services update aletheia-api --region=${REGION} --set-secrets=EXIFTOOLS_API_KEY=exiftools-api-key:<número da versão>
+gcloud run services update aletheia-api --region=${REGION} --update-secrets=EXIFTOOLS_API_KEY=exiftools-api-key:<número da versão>
 ```
+
+Use `--update-secrets`, nunca `--set-secrets`: o `--set-secrets` substitui a lista inteira e apagaria os outros segredos da API (desde a Fase 5b, o `FACTCHECK_API_KEY`). Ver "Atualização de 22/11/2026 (Fase 5b: Fact Check Tools)".
 
 **3.7. Conferências básicas da API:**
 
@@ -376,7 +378,7 @@ gcloud run services update <serviço> --region=${REGION} --image=southamerica-ea
 
 - Os cinco registros mais recentes do Cloud Run (1, 3, 1, 8 e 3 mídias) mostraram `outcome` "ok" e `exif` "ok" em todas as mídias.
 - O teste mobile a 375 px do visual (`docs/desenvolvimento-local.md`, "Testar a interface", passo 8) passou.
-- **A marcação ClaimReview não foi testada com uma página real**, porque nenhuma foi encontrada. Só foi testada com os exemplos oficiais (fixtures) e com páginas sem marcação, em que a seção não aparece. Ver `docs/pendencias.md`.
+- Validado em 23/11/2026 com uma matéria real do Estadão Verifica (ver a seção da 5b).
 
 **Como voltar atrás.** Ainda não foi executado. Primeiro, liste as revisões do serviço:
 
@@ -392,9 +394,135 @@ gcloud run services update-traffic <serviço> --region=${REGION} --to-revisions=
 
 Cuidado com a ordem. Depois que a API estrita estiver no ar (a que exige `claimReviews` na linha `page`), voltar o fetcher para uma revisão anterior à Fase 5a dá 502 em toda checagem. Nesse caso, volte a API junto.
 
-## Fase 5b: chave do Fact Check Tools (a implantar)
+## Atualização de 22/11/2026 (Fase 5b: Fact Check Tools)
 
-A chave de API do Google Fact Check Tools vira o segredo `factcheck-api-key` no Secret Manager e entra na API por `--set-secrets=FACTCHECK_API_KEY=factcheck-api-key:latest`. O passo a passo ainda será escrito.
+A API ganhou a busca de checagens publicadas pela manchete (`docs/api.md`, "Fact Check Tools"). A chave do Google Fact Check Tools vira o segredo `factcheck-api-key` e entra na API como `FACTCHECK_API_KEY`. Só a API muda: o fetcher não mudou na 5b.
+
+**Pré-requisito (console).**
+
+- API Fact Check Tools ativada no projeto.
+- Chave criada em Credenciais > Criar credenciais > Chave de API, restrita só à Fact Check Tools API, sem restrição de aplicativo.
+- A chave fica no `secrets.sh` (fora do repositório) como `FACTCHECK_API_KEY`. Depois do `source`, confira só o tamanho, nunca o valor:
+
+```
+echo ${#FACTCHECK_API_KEY}
+```
+
+- Chaves de API do Google costumam ter 39 caracteres.
+- **Fim de linha do Windows.** Um `\r` no fim da linha do `secrets.sh` soma 1 ao tamanho (40 em vez de 39) e iria junto para o segredo. Há duas saídas:
+  - Opcional: corrigir o arquivo. **Cuidado: o `sed -i` altera o `secrets.sh` no lugar**, e ele é o seu arquivo, fora do repositório:
+
+```
+sed -i 's/\r$//' <caminho do secrets.sh>
+```
+
+  - Sem mexer no arquivo, limpe só a variável, na janela atual:
+
+```
+FACTCHECK_API_KEY=$(printf %s "$FACTCHECK_API_KEY" | tr -d '\r')
+```
+
+- **Tamanho 0 depois do `source`:** o nome da variável ou o caminho do arquivo está errado. Para ver só os nomes, sem os valores:
+
+```
+sed 's/=.*//' <caminho do secrets.sh>
+```
+
+**Aviso: use `--update-secrets`, nunca `--set-secrets`.** O `--set-secrets` substitui a lista inteira de segredos do serviço e apagaria o `EXIFTOOLS_API_KEY`, que está fixado na versão 2.
+
+**Passos.** Defina antes `PROJECT_ID`, `REGION` e `API_SA` (Etapa 3).
+
+1. Criar o segredo a partir da variável, sem imprimir a chave:
+
+```
+printf %s "$FACTCHECK_API_KEY" | gcloud secrets create factcheck-api-key --data-file=-
+```
+
+2. Conceder leitura só à conta da API, só nesse segredo:
+
+```
+gcloud secrets add-iam-policy-binding factcheck-api-key --member="serviceAccount:${API_SA}" --role="roles/secretmanager.secretAccessor"
+```
+
+3. Conferir que o tamanho do segredo é igual ao da variável (os dois comandos imprimem só um número):
+
+```
+gcloud secrets versions access latest --secret=factcheck-api-key | wc -c
+```
+
+```
+echo ${#FACTCHECK_API_KEY}
+```
+
+4. Construir só a imagem da API, com um `TAG` novo (Etapa 2.2 e 2.4):
+
+```
+TAG=$(git rev-parse --short HEAD)
+```
+
+```
+gcloud builds submit --config=deploy/cloudbuild.yaml --substitutions=_SERVICE=api,_IMAGE=southamerica-east1-docker.pkg.dev/${PROJECT_ID}/aletheia/api:${TAG} .
+```
+
+5. Anotar a revisão atual, para poder voltar:
+
+```
+gcloud run services describe aletheia-api --region=${REGION} --format="value(status.latestReadyRevisionName)"
+```
+
+6. Atualizar a API com a imagem nova e o segredo novo:
+
+```
+gcloud run services update aletheia-api --region=${REGION} --image=southamerica-east1-docker.pkg.dev/${PROJECT_ID}/aletheia/api:${TAG} --update-secrets=FACTCHECK_API_KEY=factcheck-api-key:latest
+```
+
+7. Conferir que os **dois** segredos continuam (`EXIFTOOLS_API_KEY` e `FACTCHECK_API_KEY`). O comando mostra os nomes e as referências aos segredos, nunca o valor deles:
+
+```
+gcloud run services describe aletheia-api --region=${REGION} --format="yaml(spec.template.spec.containers[0].env)"
+```
+
+8. Publicar o Hosting (Etapa 4.4), porque o `web/` mudou:
+
+```
+npx firebase-tools@15.34.0 deploy --only hosting --project ${PROJECT_ID}
+```
+
+9. Testar pelo site (uma checagem real) e ler o campo `factCheck` do log:
+
+```
+gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=aletheia-api" --limit=10 --freshness=15m --format="json(jsonPayload.outcome,jsonPayload.factCheck)"
+```
+
+**Leitura do campo `factCheck` do log** (contagem por status; nunca traz o texto da busca):
+
+| Valor | Significado |
+| --- | --- |
+| `{"ok":1}` | Funcionou. |
+| `http_403` | Chave recusada, cabeçalho não aceito ou API desativada no projeto. |
+| `http_429` | Cota (300 requisições por minuto no projeto). |
+| `timeout` ou `network` | O Google não respondeu a tempo. |
+| `invalid` | Resposta fora do formato. |
+| Sem o campo, ou `not_configured` | Segredo ausente. |
+
+**Resultado:**
+
+- Em 22/11/2026, a chave foi aceita pelo cabeçalho `X-Goog-Api-Key`, sem `http_403`. Três checagens seguidas deram `factCheck` `{"ok":1}`.
+- Uma resposta real do Google (`curl` com a chave, consulta com resultados) foi passada pelo parser: as 3 afirmações e as 3 revisões foram aceitas sem descarte.
+- A resposta real não traz `reviewDate`, e a interface mostra "Não informado". O Google corta alguns títulos com "...".
+- Em 23/11/2026, com uma matéria real de checagem do Estadão Verifica, o relatório mostrou a lista de checagens, e a marcação ClaimReview da própria página foi lida (primeira validação da 5a com uma página real).
+
+**Como voltar atrás.** Não executado. Liste as revisões e mande o tráfego para a anotada no passo 5:
+
+```
+gcloud run revisions list --service=aletheia-api --region=${REGION}
+```
+
+```
+gcloud run services update-traffic aletheia-api --region=${REGION} --to-revisions=<revisão antiga>=100
+```
+
+Voltar a API para antes da 5b é seguro: o campo `factCheck` é aditivo, e a web trata a ausência dele.
 
 ## Como retomar
 
@@ -414,4 +542,3 @@ Para quem volta ao projeto (ou a uma conversa nova):
 - Por que o Hosting substitui o `Strict-Transport-Security` do `firebase.json` pelo próprio valor.
 - Que `/healthz` é interceptado pelo Cloud Run (hipótese forte, sem confirmação oficial).
 - Os caminhos com sinal da ExifTools: localização, autoria e C2PA (ver `docs/pendencias.md`).
-- A marcação ClaimReview com uma página real (ver "Atualização de 22/11/2026").

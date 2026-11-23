@@ -176,7 +176,7 @@ O fetcher faz requisições reais a partir da sua máquina (ver o aviso do `try-
 
 ### `api/.env.example`
 
-Traz só os nomes das variáveis (`GOOGLE_CLIENT_ID`, `FETCHER_URL`, `FETCHER_AUDIENCE`, `EXIFTOOLS_API_KEY`), sem valores. Quem o mantém é o desenvolvedor; o agente não toca em arquivos `.env*`. Falta acrescentar a linha `FACTCHECK_API_KEY=` (opcional, Fase 5b), a cargo do desenvolvedor.
+Traz só os nomes das variáveis (`PORT`, `GOOGLE_CLIENT_ID`, `FETCHER_URL`, `FETCHER_AUDIENCE`, `EXIFTOOLS_API_KEY` e `FACTCHECK_API_KEY`), sem valores. Quem o mantém é o desenvolvedor; o agente não toca em arquivos `.env*`.
 
 **Decisão tomada:** o `api/.env.example` é versionado como modelo, só com os nomes e sem valores. O `.gitignore` tem `!.env.example` depois da regra `.env.*`, que antes também o ignorava.
 
